@@ -298,7 +298,7 @@ module Mongo
         attempt += 1
         server ||= select_server(cluster, ServerSelector.primary, session)
         yield server
-      rescue Error::OperationFailure, Error::SocketTimeoutError, Error::OperationFailure => e
+      rescue Error::OperationFailure, Error::SocketTimeoutError, Error::SocketError => e
         e.add_note('legacy retry')
         e.add_note("attempt #{attempt}")
         server = nil
@@ -352,6 +352,7 @@ module Mongo
           raise e
         end
         log_retry(e, message: "Legacy read retry for read on #{cluster.servers.inspect}: #{e.inspect}, attempt #{attempt}, max retries is #{client.max_read_retries}")
+        sleep(client.read_retry_interval)
         server = select_server(cluster, server_selector, session)
         retry
       rescue Error::OperationFailure => e
