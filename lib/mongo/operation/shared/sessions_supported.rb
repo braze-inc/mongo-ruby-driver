@@ -175,7 +175,7 @@ module Mongo
           #   when a non-mode field (i.e. tag_sets) is present
           # - Otherwise $readPreference is sent
           if read
-            doc = read.to_mongos
+            doc = read.to_doc
             if doc
               sel['$readPreference'] = doc
             end
