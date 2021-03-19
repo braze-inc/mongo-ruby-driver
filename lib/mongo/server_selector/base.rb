@@ -265,6 +265,13 @@ module Mongo
           end
         end
 
+        # Try to restart the connection to the cluster
+        cluster.servers.each do |s|
+          s.disconnect!
+          s.monitor.restart!
+          s.reconnect!
+        end
+
         msg = "No #{name} server"
         if is_a?(ServerSelector::Secondary) && !tag_sets.empty?
           msg += " with tag sets: #{tag_sets}"
