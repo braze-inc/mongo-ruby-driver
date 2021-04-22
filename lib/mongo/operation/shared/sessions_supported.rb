@@ -176,7 +176,7 @@ module Mongo
           # required to only be sent when a non-mode field (i.e. tag_sets)
           # is present, but this causes wrong behavior (DRIVERS-1642).
           if read
-            doc = read.to_doc
+            doc = read.to_mongos
             if doc
               sel['$readPreference'] = doc
             end
