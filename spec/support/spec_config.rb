@@ -110,6 +110,14 @@ class SpecConfig
     !!(RUBY_PLATFORM =~ /\bjava\b/)
   end
 
+  def linux?
+    !!(RbConfig::CONFIG['host_os'].downcase =~ /\blinux/)
+  end
+
+  def macos?
+    !!(RbConfig::CONFIG['host_os'].downcase =~ /\bdarwin/)
+  end
+
   def platform
     RUBY_PLATFORM
   end
@@ -362,6 +370,10 @@ EOT
     else
       27020
     end
+  end
+
+  def auth?
+    x509_auth? || user
   end
 
   # Option hashes
