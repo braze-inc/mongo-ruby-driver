@@ -52,6 +52,11 @@ module Mongo
       WRITE_RETRY_MESSAGES = [
         'not master',
         'node is recovering',
+        'interrupted at shutdown',
+        'transport error',
+        'socket exception',
+        'could not get last error',
+        'dbclient error communicating with server'
       ].freeze
 
       # These are magic error messages that could indicate a cluster
@@ -59,7 +64,7 @@ module Mongo
       #
       # @since 2.1.1
       # @api private
-      RETRY_MESSAGES = WRITE_RETRY_MESSAGES + [
+      RETRY_MESSAGES = (WRITE_RETRY_MESSAGES + [
         'transport error',
         'socket exception',
         "can't connect",
@@ -70,7 +75,7 @@ module Mongo
         'interrupted at shutdown',
         'unknown replica set',
         'dbclient error communicating with server'
-      ].freeze
+      ]).uniq.freeze
 
       def_delegators :@result, :operation_time
 

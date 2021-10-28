@@ -315,7 +315,7 @@ module Mongo
                 break unless connection
 
                 if connection.pid != pid
-                  log_warn("Detected PID change - Mongo client should have been reconnected (old pid #{connection.pid}, new pid #{pid}")
+                  log_debug("Detected PID change - Mongo client should have been reconnected (old pid #{connection.pid}, new pid #{pid}")
                   connection.disconnect!(reason: :stale)
                   @populate_semaphore.signal
                   next
