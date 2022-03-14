@@ -372,6 +372,14 @@ module Mongo
         else
           raise e
         end
+      rescue Error::NoServerAvailable => e
+        if attempt <= 1
+          log_retry(e, message: "Legacy read retry for read on #{cluster.servers.inspect}: #{e.inspect}, attempt #{attempt}, max retries is #{client.max_read_retries}")
+          cluster.scan!
+          retry
+        else
+          raise e
+        end
       end
     end
 
