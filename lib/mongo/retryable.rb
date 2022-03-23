@@ -372,15 +372,6 @@ module Mongo
         else
           raise e
         end
-      rescue Error::NoServerAvailable => e
-        if attempt <= 1
-          log_retry(e, message: "Legacy read retry for read on #{cluster.servers.inspect}: #{e.inspect}, attempt #{attempt}, max retries is #{client.max_read_retries}")
-          cluster.scan!(false)
-          sleep(client.read_retry_interval)
-          retry
-        else
-          raise e
-        end
       end
     end
 
@@ -481,7 +472,20 @@ module Mongo
     # This is a separate method to make it possible for the test suite to
     # assert that server selection is performed during retry attempts.
     def select_server(cluster, server_selector, session)
-      server_selector.select_server(cluster, nil, session)
+      retried_server_selector = false
+      begin
+        server_selector.select_server(cluster, nil, session)
+      rescue ::Mongo::Error::NoServerAvailable => e
+        if !retried_server_selector
+          retried_server_selector = true
+          log_retry(e, message: "Select server #{cluster.servers.inspect}: #{e.inspect}")
+          # Force a synchronous scan to ensure that monitors are online
+          cluster.scan!(true)
+          retry
+        else
+          raise e
+        end
+      end
     end
 
     # Log a warning so that any application slow down is immediately obvious.
