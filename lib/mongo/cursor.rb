@@ -80,14 +80,13 @@ module Mongo
       if @cursor_id.nil?
         raise ArgumentError, 'Cursor id must be present in the result'
       end
+      @connection_global_id = result.connection_global_id
       @options = options
       @session = @options[:session]
       unless closed?
         register
-        ObjectSpace.define_finalizer(self, self.class.finalize(kill_spec,
-          cluster,
-          server,
-          @session))
+        ObjectSpace.define_finalizer(self, self.class.finalize(kill_spec(@connection_global_id),
+          cluster))
       end
     end
 
@@ -102,18 +101,16 @@ module Mongo
     #
     # @param [ Cursor::KillSpec ] kill_spec The KillCursor operation specification.
     # @param [ Mongo::Cluster ] cluster The cluster associated with this cursor and its server.
-    # @param [ Mongo::Server ] server The server to send the killCursors operation to.
     #
     # @return [ Proc ] The Finalizer.
     #
     # @api private
-    def self.finalize(kill_spec, cluster, server, session)
+    def self.finalize(kill_spec, cluster)
       unless KillSpec === kill_spec
         raise ArgumentError, "First argument must be a KillSpec: #{kill_spec.inspect}"
       end
       proc do
-        cluster.schedule_kill_cursor(kill_spec, server)
-        session.end_session if session && session.implicit?
+        cluster.schedule_kill_cursor(kill_spec)
       end
     end
 
@@ -254,7 +251,12 @@ module Mongo
     #
     # @since 2.2.0
     def batch_size
-      @view.batch_size && @view.batch_size > 0 ? @view.batch_size : limit
+      value = @view.batch_size && @view.batch_size > 0 ? @view.batch_size : limit
+      if value == 0
+        nil
+      else
+        value
+      end
     end
 
     # Is the cursor closed?
@@ -367,12 +369,14 @@ module Mongo
     end
 
     # @api private
-    def kill_spec
+    def kill_spec(connection_global_id)
       KillSpec.new(
         cursor_id: id,
         coll_name: collection_name,
         db_name: database.name,
-        service_id: initial_result.connection_description.service_id,
+        connection_global_id: connection_global_id,
+        server_address: server.address,
+        session: @session,
       )
     end
 
@@ -382,6 +386,14 @@ module Mongo
     end
 
     private
+
+    def batch_size_for_get_more
+      if batch_size && use_limit?
+        [batch_size, @remaining].min
+      else
+        batch_size
+      end
+    end
 
     def exhausted?
       limited? ? @remaining <= 0 : false
@@ -405,7 +417,7 @@ module Mongo
         cursor_id: id,
         # 3.2+ servers use batch_size, 3.0- servers use to_return.
         # TODO should to_return be calculated in the operation layer?
-        batch_size: batch_size,
+        batch_size: batch_size_for_get_more,
         to_return: to_return,
         max_time_ms: if view.respond_to?(:max_await_time_ms) &&
           view.max_await_time_ms &&
@@ -416,6 +428,9 @@ module Mongo
           nil
         end,
       }
+      if view.respond_to?(:options) && view.options.is_a?(Hash)
+        spec[:comment] = view.options[:comment] unless view.options[:comment].nil?
+      end
       Operation::GetMore.new(spec)
     end
 
@@ -468,7 +483,7 @@ module Mongo
       context = Operation::Context.new(
         client: client,
         session: @session,
-        service_id: initial_result.connection_description.service_id,
+        connection_global_id: @connection_global_id,
       )
       op.execute(@server, context: context)
     end

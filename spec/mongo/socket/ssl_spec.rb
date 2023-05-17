@@ -5,7 +5,8 @@ require 'spec_helper'
 
 # this test performs direct network connections without retries.
 # In case of intermittent network issues, retry the entire failing test.
-describe Mongo::Socket::SSL, retry: 3 do
+describe Mongo::Socket::SSL do
+  retry_test
   clean_slate_for_all
   require_tls
 
@@ -306,67 +307,45 @@ describe Mongo::Socket::SSL, retry: 3 do
       end
     end
 
-    context 'when ruby version is < 2.4.1' do
-      ruby_version_lt '2.4.1'
-
-      context 'when a key is passed, but it is not of the right type' do
-
-        let(:ssl_options) do
-          key = "This is a string not a key"
-          {
-              :ssl => true,
-              :ssl_key_object => key,
-              :ssl_cert => SpecConfig.instance.client_cert_path,
-              :ssl_verify => false
-          }
-        end
-
-        it 'raises a TypeError' do
-          expect do
-            socket
-          end.to raise_exception(TypeError)
-        end
-      end
-    end
-
     # Note that as of MRI 2.4, Creating a socket with the wrong key type raises
     # a NoMethodError because #private? is attempted to be called on the key.
     # In jruby 9.2 a TypeError is raised.
     # In jruby 9.1 a OpenSSL::PKey::PKeyError is raised.
-    context 'when ruby version is >= 2.4.1' do
-      ruby_version_gte '2.4.1'
+    context 'when a key is passed, but it is not of the right type' do
 
-      context 'when a key is passed, but it is not of the right type' do
+      let(:ssl_options) do
+        key = "This is a string not a key"
+        {
+            :ssl => true,
+            :ssl_key_object => key,
+            :ssl_cert => SpecConfig.instance.client_cert_path,
+            :ssl_verify => false
+        }
+      end
 
-        let(:ssl_options) do
-          key = "This is a string not a key"
-          {
-              :ssl => true,
-              :ssl_key_object => key,
-              :ssl_cert => SpecConfig.instance.client_cert_path,
-              :ssl_verify => false
-          }
-        end
-
-        let(:expected_exception) do
-          if SpecConfig.instance.jruby?
-            if RUBY_VERSION >= '2.5.0'
-              # jruby 9.2
-              TypeError
-            else
-              # jruby 9.1
-              OpenSSL::OpenSSLError
-            end
+      let(:expected_exception) do
+        if SpecConfig.instance.jruby?
+          if RUBY_VERSION >= '2.5.0'
+            # jruby 9.2
+            TypeError
+          else
+            # jruby 9.1
+            OpenSSL::OpenSSLError
+          end
+        else
+          # MRI
+          if RUBY_VERSION >= '3.1.0'
+            TypeError
           else
             NoMethodError
           end
         end
+      end
 
-        it 'raises a NoMethodError' do
-          expect do
-            socket
-          end.to raise_exception(expected_exception)
-        end
+      it 'raises a NoMethodError' do
+        expect do
+          socket
+        end.to raise_exception(expected_exception)
       end
     end
 
@@ -386,13 +365,18 @@ describe Mongo::Socket::SSL, retry: 3 do
         context 'when a bad certificate is provided' do
 
           let(:expected_exception) do
-            # OpenSSL::X509::CertificateError: nested asn1 error
-            [OpenSSL::OpenSSLError, /asn1 error/i]
+            if RUBY_VERSION >= '3.1.0'
+              # OpenSSL::X509::CertificateError: PEM_read_bio_X509: no start line
+              OpenSSL::X509::CertificateError
+            else
+              # OpenSSL::X509::CertificateError: nested asn1 error
+              [OpenSSL::OpenSSLError, /asn1 error/i]
+            end
           end
 
           let(:ssl_options) do
             super().merge(
-              :ssl_cert => COMMAND_MONITORING_TESTS.first,
+              :ssl_cert => CRUD_TESTS.first,
               :ssl_key => nil,
             )
           end
@@ -403,19 +387,14 @@ describe Mongo::Socket::SSL, retry: 3 do
         context 'when a bad key is provided' do
 
           let(:expected_exception) do
-            if RUBY_VERSION >= '2.4.0'
-              # OpenSSL::PKey::PKeyError: Could not parse PKey: no start line
-              [OpenSSL::OpenSSLError, /Could not parse PKey/]
-            else
-              # ArgumentError: Could not parse PKey: no start line
-              [ArgumentError, /Could not parse PKey/]
-            end
+            # OpenSSL::PKey::PKeyError: Could not parse PKey: no start line
+            [OpenSSL::OpenSSLError, /Could not parse PKey/]
           end
 
           let(:ssl_options) do
             super().merge(
               :ssl_cert => nil,
-              :ssl_key => COMMAND_MONITORING_TESTS.first,
+              :ssl_key => CRUD_TESTS.first,
             )
           end
 
@@ -433,7 +412,7 @@ describe Mongo::Socket::SSL, retry: 3 do
 
           let(:ssl_options) do
             super().merge(
-              :ssl_cert => COMMAND_MONITORING_TESTS.first,
+              :ssl_cert => CRUD_TESTS.first,
               :ssl_key => nil,
             )
           end

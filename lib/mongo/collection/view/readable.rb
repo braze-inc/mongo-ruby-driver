@@ -34,10 +34,31 @@ module Mongo
         # @param [ Array<Hash> ] pipeline The aggregation pipeline.
         # @param [ Hash ] options The aggregation options.
         #
+        # @option options [ true, false ] :allow_disk_use Set to true if disk
+        #   usage is allowed during the aggregation.
+        # @option options [ Integer ] :batch_size The number of documents to return
+        #   per batch.
+        # @option options [ true, false ] :bypass_document_validation Whether or
+        #   not to skip document level validation.
+        # @option options [ Hash ] :collation The collation to use.
+        # @option options [ Object ] :comment A user-provided
+        #   comment to attach to this command.
+        # @option options [ String ] :hint The index to use for the aggregation.
+        # @option options [ Hash ] :let Mapping of variables to use in the pipeline.
+        #   See the server documentation for details.
+        # @option options [ Integer ] :max_time_ms The maximum amount of time in
+        #   milliseconds to allow the aggregation to run.
+        # @option options [ true, false ] :use_cursor Indicates whether the command
+        #   will request that the server provide results using a cursor. Note that
+        #   as of server version 3.6, aggregations always provide results using a
+        #   cursor and this option is therefore not valid.
+        # @option options [ Session ] :session The session to use.
+        #
         # @return [ Aggregation ] The aggregation object.
         #
         # @since 2.0.0
         def aggregate(pipeline, options = {})
+          options = @options.merge(options) unless Mongo.broken_view_options
           aggregation = Aggregation.new(self, pipeline, options)
 
           # Because the $merge and $out pipeline stages write documents to the
@@ -108,7 +129,7 @@ module Mongo
         # @note Set profilingLevel to 2 and the comment will be logged in the profile
         #   collection along with the query.
         #
-        # @param [ String ] comment The comment to be associated with the query.
+        # @param [ Object ] comment The comment to be associated with the query.
         #
         # @return [ String, View ] Either the comment or a
         #   new +View+.
@@ -134,6 +155,8 @@ module Mongo
         # @option opts [ Hash ] :read The read preference options.
         # @option opts [ Hash ] :collation The collation to use.
         # @option opts [ Mongo::Session ] :session The session to use for the operation.
+        # @option opts [ Object ] :comment A user-provided
+        #   comment to attach to this command.
         #
         # @return [ Integer ] The document count.
         #
@@ -145,6 +168,7 @@ module Mongo
         #     * $near should be replaced with $geoWithin with $center
         #     * $nearSphere should be replaced with $geoWithin with $centerSphere
         def count(opts = {})
+          opts = @options.merge(opts) unless Mongo.broken_view_options
           cmd = { :count => collection.name, :query => filter }
           cmd[:skip] = opts[:skip] if opts[:skip]
           cmd[:hint] = opts[:hint] if opts[:hint]
@@ -168,6 +192,7 @@ module Mongo
                 # For some reason collation was historically accepted as a
                 # string key. Note that this isn't documented as valid usage.
                 collation: opts[:collation] || opts['collation'] || collation,
+                comment: opts[:comment],
               ).execute(server, context: Operation::Context.new(client: client, session: session))
             end.n.to_i
           end
@@ -188,17 +213,21 @@ module Mongo
         #   command to run.
         # @option opts [ Hash ] :read The read preference options.
         # @option opts [ Hash ] :collation The collation to use.
+        # @option opts [ Mongo::Session ] :session The session to use for the operation.
+        # @option ops [ Object ] :comment A user-provided
+        #   comment to attach to this command.
         #
         # @return [ Integer ] The document count.
         #
         # @since 2.6.0
         def count_documents(opts = {})
+          opts = @options.merge(opts) unless Mongo.broken_view_options
           pipeline = [:'$match' => filter]
           pipeline << { :'$skip' => opts[:skip] } if opts[:skip]
           pipeline << { :'$limit' => opts[:limit] } if opts[:limit]
           pipeline << { :'$group' => { _id: 1, n: { :'$sum' => 1 } } }
 
-          opts = opts.select { |k, _| [:hint, :max_time_ms, :read, :collation, :session].include?(k) }
+          opts = opts.slice(:hint, :max_time_ms, :read, :collation, :session, :comment)
           opts[:collation] ||= collation
 
           first = aggregate(pipeline, opts).first
@@ -216,6 +245,8 @@ module Mongo
         # @option opts :max_time_ms [ Integer ] The maximum amount of time to allow the command to
         #   run.
         # @option opts [ Hash ] :read The read preference options.
+        # @option opts [ Object ] :comment A user-provided
+        #   comment to attach to this command.
         #
         # @return [ Integer ] The document count.
         #
@@ -226,42 +257,34 @@ module Mongo
           end
 
           %i[limit skip].each do |opt|
-            if @options.key?(opt)
+            if options.key?(opt) || opts.key?(opt)
               raise ArgumentError, "Cannot call estimated_document_count when querying with #{opt}"
             end
           end
 
+          opts = @options.merge(opts) unless Mongo.broken_view_options
           Mongo::Lint.validate_underscore_read_preference(opts[:read])
           read_pref = opts[:read] || read_preference
           selector = ServerSelector.get(read_pref || server_selector)
           with_session(opts) do |session|
             read_with_retry(session, selector) do |server|
               context = Operation::Context.new(client: client, session: session)
-              if server.description.server_version_gte?('5.0')
-                pipeline = [
-                  {'$collStats' => {'count' => {}}},
-                  {'$group' => {'_id' => 1, 'n' => {'$sum' => '$count'}}},
-                ]
-                spec = Builder::Aggregation.new(pipeline, self, options.merge(session: session)).specification
-                result = Operation::Aggregate.new(spec).execute(server, context: context)
-                result.documents.first.fetch('n')
-              else
-                cmd = { count: collection.name }
-                cmd[:maxTimeMS] = opts[:max_time_ms] if opts[:max_time_ms]
-                if read_concern
-                  cmd[:readConcern] = Options::Mapper.transform_values_to_strings(
-                    read_concern)
+              cmd = { count: collection.name }
+              cmd[:maxTimeMS] = opts[:max_time_ms] if opts[:max_time_ms]
+              if read_concern
+                cmd[:readConcern] = Options::Mapper.transform_values_to_strings(
+                  read_concern)
                 end
                 result = Operation::Count.new(
                   selector: cmd,
                   db_name: database.name,
                   read: read_pref,
                   session: session,
+                  comment: opts[:comment],
                 ).execute(server, context: context)
                 result.n.to_i
               end
             end
-          end
         rescue Error::OperationFailure => exc
           if exc.code == 26
             # NamespaceNotFound
@@ -286,6 +309,8 @@ module Mongo
         #   command to run.
         # @option opts [ Hash ] :read The read preference options.
         # @option opts [ Hash ] :collation The collation to use.
+        # @option options [ Object ] :comment A user-provided
+        #   comment to attach to this command.
         #
         # @return [ Array<Object> ] The list of distinct values.
         #
@@ -294,9 +319,10 @@ module Mongo
           if field_name.nil?
             raise ArgumentError, 'Field name for distinct operation must be not nil'
           end
+          opts = @options.merge(opts) unless Mongo.broken_view_options
           cmd = { :distinct => collection.name,
                   :key => field_name.to_s,
-                  :query => filter }
+                  :query => filter, }
           cmd[:maxTimeMS] = opts[:max_time_ms] if opts[:max_time_ms]
           if read_concern
             cmd[:readConcern] = Options::Mapper.transform_values_to_strings(
@@ -313,6 +339,7 @@ module Mongo
                 options: {:limit => -1},
                 read: read_pref,
                 session: session,
+                comment: opts[:comment],
                 # For some reason collation was historically accepted as a
                 # string key. Note that this isn't documented as valid usage.
                 collation: opts[:collation] || opts['collation'] || collation,
@@ -679,7 +706,7 @@ module Mongo
             context = Operation::Context.new(
               client: client,
               session: session,
-              service_id: result.connection_description.service_id,
+              connection_global_id: result.connection_global_id,
             )
             result = op.execute(server, context: context)
             Cursor.new(self, result, server, session: session)

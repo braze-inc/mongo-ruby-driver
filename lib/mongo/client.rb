@@ -92,6 +92,8 @@ module Mongo
       :server_api,
       :server_selection_timeout,
       :socket_timeout,
+      :srv_max_hosts,
+      :srv_service_name,
       :ssl,
       :ssl_ca_cert,
       :ssl_ca_cert_object,
@@ -266,7 +268,7 @@ module Mongo
     # @option options [ Integer ] :max_idle_time The maximum seconds a socket can remain idle
     #   since it has been checked in to the pool.
     # @option options [ Integer ] :max_pool_size The maximum size of the
-    #   connection pool.
+    #   connection pool. Setting this option to zero creates an unlimited connection pool.
     # @option options [ Integer ] :max_read_retries The maximum number of read
     #   retries when legacy read retries are in use.
     # @option options [ Integer ] :max_write_retries The maximum number of write
@@ -340,6 +342,13 @@ module Mongo
     #   for selecting a server for an operation.
     # @option options [ Float ] :socket_timeout The timeout, in seconds, to
     #   execute operations on a socket.
+    # @option options [ Integer ] :srv_max_hosts The maximum number of mongoses
+    #   that the driver will communicate with for sharded topologies. If this
+    #   option is 0, then there will be no maximum number of mongoses. If the
+    #   given URI resolves to more hosts than ``:srv_max_hosts``, the client
+    #   will ramdomly choose an ``:srv_max_hosts`` sized subset of hosts.
+    # @option options [ String ] :srv_service_name The service name to use in
+    #   the SRV DNS query.
     # @option options [ true, false ] :ssl Whether to use TLS.
     # @option options [ String ] :ssl_ca_cert The file containing concatenated
     #   certificate authority certificates used to validate certs passed from the
@@ -420,11 +429,16 @@ module Mongo
     #     instance containing the encryption key vault
     #   - :key_vault_namespace => String, the namespace of the key vault in the
     #     format database.collection
-    #   - :kms_providers => Hash, A hash of key management service configuration
-    #     information. Valid hash keys are :local or :aws. There may be more
-    #     than one kms provider specified.
+    #   - :kms_providers => Hash, A hash of key management service (KMS) configuration
+    #     information. Valid hash keys are :aws, :azure, :gcp, :kmip, :local.
+    #     There may be more than one kms provider specified.
+    #   - :kms_tls_options => Hash, A hash of TLS options to authenticate to
+    #     KMS providers, usually used for KMIP servers. Valid hash keys
+    #     are :aws, :azure, :gcp, :kmip, :local. There may be more than one
+    #     kms provider specified.
     #   - :schema_map => Hash | nil, JSONSchema for one or more collections
-    #     specifying which fields should be encrypted.
+    #     specifying which fields should be encrypted. This option is
+    #     mutually exclusive with :schema_map_path.
     #     - Note: Schemas supplied in the schema_map only apply to configuring
     #       automatic encryption for client side encryption. Other validation
     #       rules in the JSON schema will not be enforced by the driver and will
@@ -433,10 +447,21 @@ module Mongo
     #       JSON Schemas obtained from the server. It protects against a
     #       malicious server advertising a false JSON Schema, which could trick
     #       the client into sending unencrypted data that should be encrypted.
+    #     - Note: If a collection is present on both the :encrypted_fields_map
+    #       and :schema_map, an error will be raised.
+    #   - :schema_map_path => String | nil A path to a file contains the JSON schema
+    #   of the collection that stores auto encrypted documents. This option is
+    #   mutually exclusive with :schema_map.
     #   - :bypass_auto_encryption => Boolean, when true, disables auto encryption;
     #     defaults to false.
     #   - :extra_options => Hash | nil, options related to spawning mongocryptd
     #     (this part of the API is subject to change).
+    #   - :encrypted_fields_map => Hash | nil, maps a collection namespace to
+    #     a hash describing encrypted fields for queryable encryption.
+    #     - Note: If a collection is present on both the encryptedFieldsMap
+    #       and schemaMap, an error will be raised.
+    #   - :bypass_query_analysis => Boolean | nil, when true disables automatic
+    #     analysis of outgoing commands.
     #
     #   Notes on automatic encryption:
     #   - Automatic encryption is an enterprise only feature that only applies
@@ -532,7 +557,7 @@ module Mongo
       end
 =end
       @options.freeze
-      validate_options!(addresses)
+      validate_options!(addresses, is_srv: uri.is_a?(URI::SRVProtocol))
       validate_authentication_options!
 
       database_options = @options.dup
@@ -742,7 +767,7 @@ module Mongo
         # We can't use the same cluster if some options that would affect it
         # have changed.
         if cluster_modifying?(opts)
-          Cluster.create(client)
+          Cluster.create(client, monitoring: opts[:monitoring])
         end
       end
     end
@@ -885,8 +910,11 @@ module Mongo
     #   which databases are returned based on user privileges when access control
     #   is enabled
     #
-    #   See https://docs.mongodb.com/manual/reference/command/listDatabases/
+    #   See https://mongodb.com/docs/manual/reference/command/listDatabases/
     #   for more information and usage.
+    # @option opts [ Session ] :session The session to use.
+    # @option options [ Object ] :comment A user-provided
+    #   comment to attach to this command.
     #
     # @return [ Array<String> ] The names of the databases.
     #
@@ -908,8 +936,11 @@ module Mongo
     #   which databases are returned based on user privileges when access control
     #   is enabled
     #
-    #   See https://docs.mongodb.com/manual/reference/command/listDatabases/
+    #   See https://mongodb.com/docs/manual/reference/command/listDatabases/
     #   for more information and usage.
+    # @option opts [ Session ] :session The session to use.
+    # @option options [ Object ] :comment A user-provided
+    #   comment to attach to this command.
     #
     # @return [ Array<Hash> ] The info for each database.
     #
@@ -929,6 +960,10 @@ module Mongo
     #
     # @param [ Hash ] filter The filter criteria for getting a list of databases.
     # @param [ Hash ] opts The command options.
+    #
+    # @option opts [ Session ] :session The session to use.
+    # @option options [ Object ] :comment A user-provided
+    #   comment to attach to this command.
     #
     # @return [ Array<Mongo::Database> ] The list of database objects.
     #
@@ -980,11 +1015,35 @@ module Mongo
     #
     # @param [ Array<Hash> ] pipeline Optional additional filter operators.
     # @param [ Hash ] options The change stream options.
+    # @option options [ String ] :full_document Allowed values: nil, 'default',
+    #   'updateLookup', 'whenAvailable', 'required'.
     #
-    # @option options [ String ] :full_document Allowed values: 'default', 'updateLookup'.
-    #   Defaults to 'default'. When set to 'updateLookup', the change notification for partial
-    #   updates will include both a delta describing the changes to the document, as well as a copy
-    #   of the entire document that was changed from some time after the change occurred.
+    #   The default is to not send a value (i.e. nil), which is equivalent to
+    #   'default'. By default, the change notification for partial updates will
+    #   include a delta describing the changes to the document.
+    #
+    #   When set to 'updateLookup', the change notification for partial updates
+    #   will include both a delta describing the changes to the document as well
+    #   as a copy of the entire document that was changed from some time after
+    #   the change occurred.
+    #
+    #   When set to 'whenAvailable', configures the change stream to return the
+    #   post-image of the modified document for replace and update change events
+    #   if the post-image for this event is available.
+    #
+    #   When set to 'required', the same behavior as 'whenAvailable' except that
+    #   an error is raised if the post-image is not available.
+    # @option options [ String ] :full_document_before_change Allowed values: nil,
+    #   'whenAvailable', 'required', 'off'.
+    #
+    #   The default is to not send a value (i.e. nil), which is equivalent to 'off'.
+    #
+    #   When set to 'whenAvailable', configures the change stream to return the
+    #   pre-image of the modified document for replace, update, and delete change
+    #   events if it is available.
+    #
+    #   When set to 'required', the same behavior as 'whenAvailable' except that
+    #   an error is raised if the pre-image is not available.
     # @option options [ BSON::Document, Hash ] :resume_after Specifies the logical starting point
     #   for the new change stream.
     # @option options [ Integer ] :max_await_time_ms The maximum amount of time for the server to
@@ -996,6 +1055,13 @@ module Mongo
     #   changes that occurred at or after the specified timestamp. Any command run
     #   against the server will return a cluster time that can be used here.
     #   Only recognized by server versions 4.0+.
+    # @option options [ Object ] :comment A user-provided
+    #   comment to attach to this command.
+    # @option options [ Boolean ] :show_expanded_events Enables the server to
+    #   send the 'expanded' list of change stream events. The list of additional
+    #   events included with this flag set are: createIndexes, dropIndexes,
+    #   modify, create, shardCollection, reshardCollection,
+    #   refineCollectionShardKey.
     #
     # @note A change stream only allows 'majority' read concern.
     # @note This helper method is preferable to running a raw aggregation with a $changeStream
@@ -1007,8 +1073,11 @@ module Mongo
     def watch(pipeline = [], options = {})
       return use(Database::ADMIN).watch(pipeline, options) unless database.name == Database::ADMIN
 
+      view_options = options.dup
+      view_options[:await_data] = true if options[:max_await_time_ms]
+
       Mongo::Collection::View::ChangeStream.new(
-        Mongo::Collection::View.new(self["#{Database::COMMAND}.aggregate"]),
+        Mongo::Collection::View.new(self["#{Database::COMMAND}.aggregate"], {}, view_options),
         pipeline,
         Mongo::Collection::View::ChangeStream::CLUSTER,
         options)
@@ -1084,6 +1153,14 @@ module Mongo
       end
     end
 
+    # Returns encrypted field map hash if provided when creating the client.
+    #
+    # @return [ Hash | nil ] Encrypted field map hash, or nil if not set.
+    # @api private
+    def encrypted_fields_map
+      @encrypted_fields_map ||= @options.fetch(:auto_encryption_options, {})[:encrypted_fields_map]
+    end
+
     private
 
     # Create a new encrypter object using the client's auto encryption options
@@ -1143,11 +1220,26 @@ module Mongo
 
       cluster.validate_session_support!
 
-      Session.new(cluster.session_pool.checkout, self, { implicit: true }.merge(options))
+      options = {implicit: true}.update(options)
+
+      server_session = if options[:implicit]
+        nil
+      else
+        cluster.session_pool.checkout
+      end
+
+      Session.new(server_session, self, options)
     end
 
+    # Auxiliary method that is called by interpreter when copying the client
+    # via dup or clone.
+    #
+    # @param [ Mongo::Client ] original Client that is being cloned.
+    #
+    # @api private
     def initialize_copy(original)
       @options = original.options.dup
+      @connect_lock = Mutex.new
       @monitoring = @cluster ? monitoring : Monitoring.new(options)
       @database = nil
       @read_preference = nil
@@ -1222,6 +1314,12 @@ module Mongo
             end
 
             _options[key] = compressors unless compressors.empty?
+          elsif key == :srv_max_hosts
+            if v && (!v.is_a?(Integer) || v < 0)
+              log_warn("#{v} is not a valid integer for srv_max_hosts")
+            else
+              _options[key] = v
+            end
           else
             _options[key] = v
           end
@@ -1235,7 +1333,7 @@ module Mongo
     # Validates all options after they are set on the client.
     # This method is intended to catch combinations of options which are
     # not allowed.
-    def validate_options!(addresses = nil)
+    def validate_options!(addresses = nil, is_srv: nil)
       if options[:write] && options[:write_concern] && options[:write] != options[:write_concern]
         raise ArgumentError, "If :write and :write_concern are both given, they must be identical: #{options.inspect}"
       end
@@ -1345,6 +1443,26 @@ module Mongo
           end
         end
       end
+
+      if options[:srv_max_hosts] && options[:srv_max_hosts] > 0
+        if options[:replica_set]
+          raise ArgumentError, ":srv_max_hosts > 0 cannot be used with :replica_set option"
+        end
+
+        if options[:load_balanced]
+          raise ArgumentError, ":srv_max_hosts > 0 cannot be used with :load_balanced=true"
+        end
+      end
+
+      unless is_srv.nil? || is_srv
+        if options[:srv_max_hosts]
+          raise ArgumentError, ":srv_max_hosts cannot be used on non-SRV URI"
+        end
+
+        if options[:srv_service_name]
+          raise ArgumentError, ":srv_service_name cannot be used on non-SRV URI"
+        end
+      end
     end
 
     # Validates all authentication-related options after they are set on the client
@@ -1438,7 +1556,9 @@ module Mongo
     def validate_max_min_pool_size!(option, opts)
       if option == :min_pool_size && opts[:min_pool_size]
         max = opts[:max_pool_size] || Server::ConnectionPool::DEFAULT_MAX_SIZE
-        raise Error::InvalidMinPoolSize.new(opts[:min_pool_size], max) unless opts[:min_pool_size] <= max
+        if max != 0 && opts[:min_pool_size] > max
+          raise Error::InvalidMinPoolSize.new(opts[:min_pool_size], max)
+        end
       end
       true
     end
@@ -1450,7 +1570,7 @@ module Mongo
         # for custom classes implementing key access ([]).
         # Instead reject common cases of strings and symbols.
         if read.is_a?(String) || read.is_a?(Symbol)
-          raise Error::InvalidReadOption.new(read, 'must be a hash')
+          raise Error::InvalidReadOption.new(read, "the read preference must be specified as a hash: { mode: #{read.inspect} }")
         end
 
         if mode = read[:mode]

@@ -11,7 +11,7 @@ def standard_dependencies
     # Explicitly specify each rspec dependency so that we can use
     # rspec-mocks-diag instead of rspec-mocks
     gem 'rspec-core', '~> 3.9'
-    gem 'activesupport'
+    gem 'activesupport', '<7.1'
     gem 'rake'
     gem 'webrick'
 
@@ -28,6 +28,14 @@ def standard_dependencies
     # for benchmark tests
     gem 'yajl-ruby', platforms: :mri, require: false
     gem 'celluloid', platforms: :mri, require: false
+
+    platform :mri do
+      # Debugger for VSCode.
+      if !ENV['CI'] && !ENV['DOCKER'] && RUBY_VERSION < '3.0'
+        gem 'debase'
+        gem 'ruby-debug-ide'
+      end
+    end
   end
 
   group :testing do
@@ -49,5 +57,9 @@ def standard_dependencies
     gem 'ruby-prof', platforms: :mri
     gem 'erubi'
     gem 'tilt'
+  end
+
+  if ENV['FLE'] == 'helper'
+    gem 'libmongocrypt-helper', '~> 1.5.2'
   end
 end

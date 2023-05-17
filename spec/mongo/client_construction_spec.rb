@@ -211,7 +211,7 @@ describe Mongo::Client do
             let(:kms_providers) { nil }
 
             it 'raises an exception' do
-              expect { client }.to raise_error(ArgumentError, /kms_providers option must not be nil/)
+              expect { client }.to raise_error(ArgumentError, /KMS providers options must not be nil/)
             end
           end
 
@@ -219,7 +219,7 @@ describe Mongo::Client do
             let(:kms_providers) { { random_key: 'hello' } }
 
             it 'raises an exception' do
-              expect { client }.to raise_error(ArgumentError, /kms_providers option must have one of the following keys: :aws, :local/)
+              expect { client }.to raise_error(ArgumentError, /KMS providers options must have one of the following keys: :aws, :azure, :gcp, :kmip, :local/)
             end
           end
 
@@ -227,7 +227,7 @@ describe Mongo::Client do
             let(:kms_providers) { { local: { wrong_key: 'hello' } } }
 
             it 'raises an exception' do
-              expect { client }.to raise_error(ArgumentError, /kms_providers with :local key must be in the format: { local: { key: 'MASTER-KEY' } }/)
+              expect { client }.to raise_error(ArgumentError, /Local KMS provider options must be in the format: { key: 'MASTER-KEY' }/)
             end
           end
 
@@ -235,7 +235,7 @@ describe Mongo::Client do
             let(:kms_providers) { { aws: { wrong_key: 'hello' } } }
 
             it 'raises an exception' do
-              expect { client }.to raise_error(ArgumentError, /kms_providers with :aws key must be in the format: { aws: { access_key_id: 'YOUR-ACCESS-KEY-ID', secret_access_key: 'SECRET-ACCESS-KEY' } }/)
+              expect { client }.to raise_error(ArgumentError, / AWS KMS provider options must be in the format: { access_key_id: 'YOUR-ACCESS-KEY-ID', secret_access_key: 'SECRET-ACCESS-KEY' }/)
             end
           end
 
@@ -285,9 +285,9 @@ describe Mongo::Client do
                 }
               end
 
-              it 'sets key_vault_client as a clone of self with no encryption options' do
+              it 'sets key_vault_client with no encryption options' do
                 key_vault_client = client.encrypter.key_vault_client
-                expect(key_vault_client).to eq(client)
+                expect(key_vault_client.options['auto_encryption_options']).to be_nil
               end
 
               it 'sets bypass_auto_encryption to false' do
@@ -447,7 +447,8 @@ describe Mongo::Client do
             end.should_not raise_error
           end
 
-          it 'fails operations due to very small timeout', retry: 3 do
+          retry_test
+          it 'fails operations due to very small timeout' do
             lambda do
               client.database.command(ping: 1)
             end.should raise_error(Mongo::Error::SocketTimeoutError)
@@ -843,6 +844,20 @@ describe Mongo::Client do
               expect(client.options[:max_pool_size]).to eq(options[:max_pool_size])
             end
           end
+
+          context 'when max_pool_size is zero (unlimited)' do
+            let(:options) do
+              {
+                  :min_pool_size => 10,
+                  :max_pool_size => 0
+              }
+            end
+
+            it 'sets the option' do
+              expect(client.options[:min_pool_size]).to eq(options[:min_pool_size])
+              expect(client.options[:max_pool_size]).to eq(options[:max_pool_size])
+            end
+          end
         end
 
         context 'when max_pool_size is not provided' do
@@ -851,7 +866,7 @@ describe Mongo::Client do
 
             let(:options) do
               {
-                  :min_pool_size => 10
+                  :min_pool_size => 30
               }
             end
 
@@ -886,6 +901,24 @@ describe Mongo::Client do
             it 'sets the option' do
               expect(client.options[:min_pool_size]).to eq(options[:min_pool_size])
             end
+          end
+        end
+      end
+
+      context 'when max_pool_size is provided' do
+        let(:client) do
+          new_local_client_nmio(['127.0.0.1:27017'], options)
+        end
+
+        context 'when max_pool_size is 0 (unlimited)' do
+          let(:options) do
+            {
+                :max_pool_size => 0
+            }
+          end
+
+          it 'sets the option' do
+            expect(client.options[:max_pool_size]).to eq(options[:max_pool_size])
           end
         end
       end
@@ -1080,6 +1113,17 @@ describe Mongo::Client do
                 expect(client.options[:max_pool_size]).to eq(10)
               end
             end
+
+            context 'when max_pool_size is 0 (unlimited)' do
+              let(:uri) do
+                'mongodb://127.0.0.1:27017/?minPoolSize=10&maxPoolSize=0'
+              end
+
+              it 'sets the option' do
+                expect(client.options[:min_pool_size]).to eq(10)
+                expect(client.options[:max_pool_size]).to eq(0)
+              end
+            end
           end
 
           context 'when max_pool_size is not provided' do
@@ -1087,7 +1131,7 @@ describe Mongo::Client do
             context 'when the min_pool_size is greater than the default max_pool_size' do
 
               let(:uri) do
-                'mongodb://127.0.0.1:27017/?minPoolSize=10'
+                'mongodb://127.0.0.1:27017/?minPoolSize=30'
               end
 
               it 'raises an Exception' do
@@ -1513,6 +1557,139 @@ describe Mongo::Client do
             end
           end
         end
+
+        context 'srv_max_hosts > 0 and load_balanced: true' do
+          let(:client) do
+            new_local_client_nmio(['127.0.0.1:27017'],
+               srv_max_hosts: 1, load_balanced: true)
+          end
+
+          it 'it is rejected' do
+            expect do
+              client
+            end.to raise_error(ArgumentError, /:srv_max_hosts > 0 cannot be used with :load_balanced=true/)
+          end
+        end
+
+        context 'srv_max_hosts > 0 and replica_set' do
+          let(:client) do
+            new_local_client_nmio(['127.0.0.1:27017'],
+              srv_max_hosts: 1, replica_set: 'rs')
+          end
+
+          it 'it is rejected' do
+            expect do
+              client
+            end.to raise_error(ArgumentError, /:srv_max_hosts > 0 cannot be used with :replica_set option/)
+          end
+        end
+
+        context 'srv_max_hosts < 0' do
+          let(:client) do
+            new_local_client_nmio(['127.0.0.1:27017'],
+               srv_max_hosts: -1)
+          end
+
+          it 'is accepted and does not add the srv_max_hosts to uri_options' do
+            lambda do
+              client
+            end.should_not raise_error
+            expect(client.options).to_not have_key(:srv_max_hosts)
+          end
+        end
+
+        context 'srv_max_hosts invalid type' do
+          let(:client) do
+            new_local_client_nmio(['127.0.0.1:27017'],
+               srv_max_hosts: 'foo')
+          end
+
+          it 'is accepted and does not add the srv_max_hosts to uri_options' do
+            lambda do
+              client
+            end.should_not raise_error
+            expect(client.options).to_not have_key(:srv_max_hosts)
+          end
+        end
+
+        context 'srv_max_hosts with non-SRV URI' do
+          let(:client) do
+            new_local_client_nmio(['127.0.0.1:27017'],
+               srv_max_hosts: 1)
+          end
+
+          it 'is rejected' do
+            lambda do
+              client
+            end.should raise_error(ArgumentError, /:srv_max_hosts cannot be used on non-SRV URI/)
+          end
+        end
+
+        context 'srv_service_name with non-SRV URI' do
+          let(:client) do
+            new_local_client_nmio(['127.0.0.1:27017'],
+               srv_service_name: "customname")
+          end
+
+          it 'is rejected' do
+            lambda do
+              client
+            end.should raise_error(ArgumentError, /:srv_service_name cannot be used on non-SRV URI/)
+          end
+        end
+      end
+
+      context 'with SRV lookups mocked at Resolver' do
+        let(:srv_result) do
+          double('srv result').tap do |result|
+            allow(result).to receive(:empty?).and_return(false)
+            allow(result).to receive(:address_strs).and_return(
+              [ClusterConfig.instance.primary_address_str])
+          end
+        end
+
+        let(:client) do
+          allow_any_instance_of(Mongo::Srv::Resolver).to receive(:get_records).and_return(srv_result)
+          allow_any_instance_of(Mongo::Srv::Resolver).to receive(:get_txt_options_string)
+
+          new_local_client_nmio('mongodb+srv://foo.a.b', options)
+        end
+
+        context "when setting srv_max_hosts" do
+          let(:srv_max_hosts) { 1 }
+          let(:options) { { srv_max_hosts: srv_max_hosts } }
+
+          it 'is accepted and sets srv_max_hosts' do
+            lambda do
+              client
+            end.should_not raise_error
+            expect(client.options[:srv_max_hosts]).to eq(srv_max_hosts)
+          end
+        end
+
+        context "when setting srv_max_hosts to 0" do
+          let(:srv_max_hosts) { 0 }
+          let(:options) { { srv_max_hosts: srv_max_hosts } }
+
+          it 'is accepted sets srv_max_hosts' do
+            lambda do
+              client
+            end.should_not raise_error
+            expect(client.options[:srv_max_hosts]).to eq(srv_max_hosts)
+          end
+        end
+
+        context "when setting srv_service_name" do
+          let(:srv_service_name) { 'customname' }
+          let(:options) { { srv_service_name: srv_service_name } }
+
+          it 'is accepted and sets srv_service_name' do
+            lambda do
+              client
+            end.should_not raise_error
+            expect(client.options[:srv_service_name]).to eq(srv_service_name)
+          end
+        end
       end
 
       context ':bg_error_backtrace option' do
@@ -1596,28 +1773,28 @@ describe Mongo::Client do
             expect do
               client = new_local_client_nmio(['127.0.0.1:27017'],
                 :read => {:mode => :bogus})
-            end.to raise_error(Mongo::Error::InvalidReadOption, 'Invalid read option: {"mode"=>:bogus}: mode bogus is not one of recognized modes')
+            end.to raise_error(Mongo::Error::InvalidReadOption, 'Invalid read preference value: {"mode"=>:bogus}: mode bogus is not one of recognized modes')
           end
 
           it 'rejects bogus read preference as string' do
             expect do
               client = new_local_client_nmio(['127.0.0.1:27017'],
                 :read => {:mode => 'bogus'})
-            end.to raise_error(Mongo::Error::InvalidReadOption, 'Invalid read option: {"mode"=>"bogus"}: mode bogus is not one of recognized modes')
+            end.to raise_error(Mongo::Error::InvalidReadOption, 'Invalid read preference value: {"mode"=>"bogus"}: mode bogus is not one of recognized modes')
           end
 
           it 'rejects read option specified as a string' do
             expect do
               client = new_local_client_nmio(['127.0.0.1:27017'],
                 :read => 'primary')
-            end.to raise_error(Mongo::Error::InvalidReadOption, 'Invalid read option: primary: must be a hash')
+            end.to raise_error(Mongo::Error::InvalidReadOption, 'Invalid read preference value: "primary": the read preference must be specified as a hash: { mode: "primary" }')
           end
 
           it 'rejects read option specified as a symbol' do
             expect do
               client = new_local_client_nmio(['127.0.0.1:27017'],
                 :read => :primary)
-            end.to raise_error(Mongo::Error::InvalidReadOption, 'Invalid read option: primary: must be a hash')
+            end.to raise_error(Mongo::Error::InvalidReadOption, "Invalid read preference value: :primary: the read preference must be specified as a hash: { mode: :primary }")
           end
         end
       end

@@ -22,6 +22,7 @@ module Mongo
     #
     # @since 2.6.0
     class TransactionsTest < CRUD::CRUDTestBase
+      include MongosMacros
 
       attr_reader :expected_results
       attr_reader :skip_reason
@@ -39,10 +40,10 @@ module Mongo
       # @param [ Hash ] test The test specification.
       #
       # @since 2.6.0
-      def initialize(crud_spec, data, test)
+      def initialize(crud_spec, data, test, expectations_bson_types: true)
         test = IceNine.deep_freeze(test)
         @spec = crud_spec
-        @data = data
+        @data = data || []
         @description = test['description']
         @client_options = {
           # Disable legacy read & write retries, so that when spec tests
@@ -70,7 +71,8 @@ module Mongo
           Operation.new(self, op)
         end
 
-        @expectations = BSON::ExtJSON.parse_obj(test['expectations'], mode: :bson)
+        mode = if expectations_bson_types then :bson else nil end
+        @expectations = BSON::ExtJSON.parse_obj(test['expectations'], mode: mode)
 
         if test['outcome']
           @outcome = Mongo::CRUD::Outcome.new(BSON::ExtJSON.parse_obj(test['outcome'], mode: :bson))
@@ -232,19 +234,20 @@ module Mongo
           end
         end
 
+        key_vault_coll = support_client
+        .use(:keyvault)[:datakeys]
+        .with(write: { w: :majority })
+
+        key_vault_coll.drop
         # Insert data into the key vault collection if required to do so by
         # the tests.
         if @spec.key_vault_data && !@spec.key_vault_data.empty?
-          key_vault_coll = support_client
-            .use(:admin)[:datakeys]
-            .with(write: { w: :majority })
-
-          key_vault_coll.drop
           key_vault_coll.insert_many(@spec.key_vault_data)
         end
 
+        encrypted_fields = @spec.encrypted_fields if @spec.encrypted_fields
         coll = support_client[@spec.collection_name].with(write: { w: :majority })
-        coll.drop
+        coll.drop(encrypted_fields: encrypted_fields)
 
         # Place a jsonSchema validator on the collection if required to do so
         # by the tests.
@@ -254,19 +257,19 @@ module Mongo
           {}
         end
 
-        support_client.command(
+        create_collection_spec = {
           create: @spec.collection_name,
           validator: collection_validator,
           writeConcern: { w: 'majority' }
-        )
+        }
+
+        create_collection_spec[:encryptedFields] = encrypted_fields if encrypted_fields
+        support_client.command(create_collection_spec)
 
         coll.insert_many(@data) unless @data.empty?
 
-        $distinct_ran ||= {}
-        $distinct_ran[@spec.database_name] ||= if description =~ /distinct/ || @operations.any? { |op| op.name == 'distinct' }
-          ::Utils.mongos_each_direct_client do |direct_client|
-            direct_client.use(@spec.database_name)['test'].distinct('foo').to_a
-          end
+        if description =~ /distinct/ || @operations.any? { |op| op.name == 'distinct' }
+          run_mongos_distincts(@spec.database_name, 'test')
         end
 
         admin_support_client.command(@fail_point_command) if @fail_point_command

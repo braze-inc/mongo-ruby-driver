@@ -331,8 +331,9 @@ describe Mongo::Cursor do
 
       before do
         authorized_collection.insert_many(documents)
-        cluster.schedule_kill_cursor(cursor.kill_spec,
-                                     cursor.instance_variable_get(:@server))
+        cluster.schedule_kill_cursor(
+          cursor.kill_spec(cursor.instance_variable_get(:@server))
+        )
       end
 
       let(:view) do
@@ -352,7 +353,12 @@ describe Mongo::Cursor do
         cluster.instance_variable_get(:@periodic_executor).flush
         expect do
           cursor.to_a
-        end.to raise_exception(Mongo::Error::OperationFailure, /[cC]ursor.*not found/)
+        # Mongo::Error::SessionEnded is raised here because the periodic executor
+        # called above kills the cursor and closes the session.
+        # This code is normally scheduled in cursor finalizer, so the cursor object
+        # is garbage collected when the code is executed. So, a user won't get
+        # this exception.
+        end.to raise_exception(Mongo::Error::SessionEnded)
       end
 
       context 'when the cursor is unregistered before the kill cursors operations are executed' do
@@ -543,6 +549,36 @@ describe Mongo::Cursor do
         end
       end
     end
+
+    context 'when the result set is iterated fully and the cursor id is non-zero' do
+      min_server_fcv '5.0'
+
+      let(:documents) do
+        (1..5).map{ |i| { field: "test#{i}" }}
+      end
+
+      let(:view) { collection.find(field:{'$gte'=>BSON::MinKey.new}).sort(field:1).limit(5).batch_size(4) }
+
+      before do
+        view.to_a
+      end
+
+      it 'schedules a get more command' do
+        get_more_commands = subscriber.started_events.select { |e| e.command_name == 'getMore' }
+        expect(get_more_commands.length).to be 1
+      end
+
+      it 'has a non-zero cursor id on successful get more' do
+        get_more_commands = subscriber.succeeded_events.select { |e| e.command_name == 'getMore' }
+        expect(get_more_commands.length).to be 1
+        expect(get_more_commands[0].reply['cursor']['id']).to_not be 0
+      end
+
+      it 'schedules a kill cursors command' do
+        get_more_commands = subscriber.started_events.select { |e| e.command_name == 'killCursors' }
+        expect(get_more_commands.length).to be 1
+      end
+    end
   end
 
   describe '#inspect' do
@@ -568,6 +604,7 @@ describe Mongo::Cursor do
         allow(reply).to receive(:namespace)
         allow(reply).to receive(:connection_description).and_return(conn_desc)
         allow(reply).to receive(:cursor_id).and_return(42)
+        allow(reply).to receive(:connection_global_id).and_return(1)
       end
     end
 
@@ -694,6 +731,56 @@ describe Mongo::Cursor do
         expect do
           cursor.close
         end.to raise_error(Mongo::Error::SocketError, "test error")
+      end
+    end
+  end
+
+  describe '#batch_size' do
+    let(:subscriber) { Mrss::EventSubscriber.new }
+
+    let(:subscribed_client) do
+      authorized_client.tap do |client|
+        client.subscribe(Mongo::Monitoring::COMMAND, subscriber)
+      end
+    end
+
+    let(:collection) do
+      subscribed_client[TEST_COLL]
+    end
+
+    let(:view) do
+      collection.find({}, limit: limit)
+    end
+
+    before do
+      collection.drop
+      collection.insert_many([].fill({ "bar": "baz" }, 0, 102))
+    end
+
+    context 'when limit is 0 and batch_size is not set' do
+      let(:limit) do
+        0
+      end
+
+      it 'does not set batch_size' do
+        view.to_a
+        get_more_commands = subscriber.started_events.select { |e| e.command_name == 'getMore' }
+        expect(get_more_commands.length).to eq(1)
+        expect(get_more_commands.first.command.keys).not_to include('batchSize')
+      end
+    end
+
+    context 'when limit is not zero and batch_size is not set' do
+      let(:limit) do
+        1000
+      end
+
+      it 'sets batch_size' do
+        view.to_a
+        get_more_commands = subscriber.started_events.select { |e| e.command_name == 'getMore' }
+
+        expect(get_more_commands.length).to eq(1)
+        expect(get_more_commands.first.command.keys).to include('batchSize')
       end
     end
   end

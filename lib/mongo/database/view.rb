@@ -28,7 +28,7 @@ module Mongo
 
       def_delegators :@database, :cluster, :read_preference, :client
       # @api private
-      def_delegators :@database, :server_selector, :read_concern
+      def_delegators :@database, :server_selector, :read_concern, :write_concern
       def_delegators :cluster, :next_primary
 
       # @return [ Integer ] batch_size The size of the batch of results
@@ -53,10 +53,13 @@ module Mongo
       # @option options [ Hash ] :filter A filter on the collections returned.
       # @option options [ true, false ] :authorized_collections A flag, when
       #   set to true, that allows a user without the required privilege
-      #   to run the command when access control is enforced
+      #   to run the command when access control is enforced.
+      # @option options [ Object ] :comment A user-provided
+      #   comment to attach to this command.
       #
-      #   See https://docs.mongodb.com/manual/reference/command/listCollections/
+      #   See https://mongodb.com/docs/manual/reference/command/listCollections/
       #   for more information and usage.
+      # @option options [ Session ] :session The session to use.
       #
       # @return [ Array<String> ] The names of all non-system collections.
       #
@@ -98,14 +101,15 @@ module Mongo
       #   set to true and used with nameOnly: true, that allows a user without the
       #   required privilege to run the command when access control is enforced
       #
-      #   See https://docs.mongodb.com/manual/reference/command/listCollections/
+      #   See https://mongodb.com/docs/manual/reference/command/listCollections/
       #   for more information and usage.
+      # @option options [ Session ] :session The session to use.
       #
       # @return [ Array<Hash> ] Info for each collection in the database.
       #
       # @since 2.0.5
       def list_collections(options = {})
-        session = client.send(:get_session)
+        session = client.send(:get_session, options)
         collections_info(session, ServerSelector.primary, options)
       end
 
@@ -184,6 +188,7 @@ module Mongo
           spec[:selector][:nameOnly] = true if options[:name_only]
           spec[:selector][:filter] = options[:filter] if options[:filter]
           spec[:selector][:authorizedCollections] = true if options[:authorized_collections]
+          spec[:comment] = options[:comment] if options[:comment]
         end
       end
 

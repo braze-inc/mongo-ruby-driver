@@ -73,7 +73,8 @@ module Mongo
                    :read_preference,
                    :server_selector,
                    :read_concern,
-                   :write_concern
+                   :write_concern,
+                   :encrypted_fields_map
 
     # @return [ Mongo::Server ] Get the primary server from the cluster.
     def_delegators :cluster,
@@ -125,8 +126,10 @@ module Mongo
     # @option options [ true, false ] :authorized_collections A flag, when
     #   set to true and used with nameOnly: true, that allows a user without the
     #   required privilege to run the command when access control is enforced
+    # @option options [ Object ] :comment A user-provided
+    #   comment to attach to this command.
     #
-    #   See https://docs.mongodb.com/manual/reference/command/listCollections/
+    #   See https://mongodb.com/docs/manual/reference/command/listCollections/
     #   for more information and usage.
     #
     # @return [ Array<String> ] Names of the collections.
@@ -150,9 +153,11 @@ module Mongo
     #   name and other information
     # @option options [ true, false ] :authorized_collections A flag, when
     #   set to true and used with nameOnly: true, that allows a user without the
-    #   required privilege to run the command when access control is enforced
+    #   required privilege to run the command when access control is enforced.
+    # @option options [ Object ] :comment A user-provided
+    #   comment to attach to this command.
     #
-    #   See https://docs.mongodb.com/manual/reference/command/listCollections/
+    #   See https://mongodb.com/docs/manual/reference/command/listCollections/
     #   for more information and usage.
     #
     # @return [ Array<Hash> ] Array of information hashes, one for each
@@ -173,9 +178,11 @@ module Mongo
     # @option options [ Hash ] :filter A filter on the collections returned.
     # @option options [ true, false ] :authorized_collections A flag, when
     #   set to true and used with name_only: true, that allows a user without the
-    #   required privilege to run the command when access control is enforced
+    #   required privilege to run the command when access control is enforced.
+    # @option options [ Object ] :comment A user-provided
+    #   comment to attach to this command.
     #
-    #   See https://docs.mongodb.com/manual/reference/command/listCollections/
+    #   See https://mongodb.com/docs/manual/reference/command/listCollections/
     #   for more information and usage.
     #
     # @return [ Array<Mongo::Collection> ] The collections.
@@ -219,7 +226,7 @@ module Mongo
       client.send(:with_session, opts) do |session|
         server = selector.select_server(cluster, nil, session)
         op = Operation::Command.new(
-          :selector => operation.dup,
+          :selector => operation,
           :db_name => name,
           :read => selector,
           :session => session
@@ -253,12 +260,13 @@ module Mongo
 
       client.send(:with_session, opts) do |session|
         read_with_retry(session, preference) do |server|
-          Operation::Command.new({
-            :selector => operation.dup,
-            :db_name => name,
-            :read => preference,
-            :session => session
-          }).execute(server, context: Operation::Context.new(client: client, session: session))
+          Operation::Command.new(
+            selector: operation.dup,
+            db_name: name,
+            read: preference,
+            session: session,
+            comment: opts[:comment],
+          ).execute(server, context: Operation::Context.new(client: client, session: session))
         end
       end
     end
@@ -378,7 +386,8 @@ module Mongo
     # @option options [ true, false ] :bypass_document_validation Whether or
     #   not to skip document level validation.
     # @option options [ Hash ] :collation The collation to use.
-    # @option options [ String ] :comment Associate a comment with the aggregation.
+    # @option options [ Object ] :comment A user-provided
+    #   comment to attach to this command.
     # @option options [ String ] :hint The index to use for the aggregation.
     # @option options [ Integer ] :max_time_ms The maximum amount of time in
     #   milliseconds to allow the aggregation to run.
@@ -405,10 +414,35 @@ module Mongo
     # @param [ Array<Hash> ] pipeline Optional additional filter operators.
     # @param [ Hash ] options The change stream options.
     #
-    # @option options [ String ] :full_document Allowed values: 'default', 'updateLookup'.
-    #   Defaults to 'default'. When set to 'updateLookup', the change notification for partial
-    #   updates will include both a delta describing the changes to the document, as well as a copy
-    #   of the entire document that was changed from some time after the change occurred.
+    # @option options [ String ] :full_document Allowed values: nil, 'default',
+    #   'updateLookup', 'whenAvailable', 'required'.
+    #
+    #   The default is to not send a value (i.e. nil), which is equivalent to
+    #   'default'. By default, the change notification for partial updates will
+    #   include a delta describing the changes to the document.
+    #
+    #   When set to 'updateLookup', the change notification for partial updates
+    #   will include both a delta describing the changes to the document as well
+    #   as a copy of the entire document that was changed from some time after
+    #   the change occurred.
+    #
+    #   When set to 'whenAvailable', configures the change stream to return the
+    #   post-image of the modified document for replace and update change events
+    #   if the post-image for this event is available.
+    #
+    #   When set to 'required', the same behavior as 'whenAvailable' except that
+    #   an error is raised if the post-image is not available.
+    # @option options [ String ] :full_document_before_change Allowed values: nil,
+    #   'whenAvailable', 'required', 'off'.
+    #
+    #   The default is to not send a value (i.e. nil), which is equivalent to 'off'.
+    #
+    #   When set to 'whenAvailable', configures the change stream to return the
+    #   pre-image of the modified document for replace, update, and delete change
+    #   events if it is available.
+    #
+    #   When set to 'required', the same behavior as 'whenAvailable' except that
+    #   an error is raised if the pre-image is not available.
     # @option options [ BSON::Document, Hash ] :resume_after Specifies the logical starting point
     #   for the new change stream.
     # @option options [ Integer ] :max_await_time_ms The maximum amount of time for the server to
@@ -420,6 +454,13 @@ module Mongo
     #   changes that occurred after the specified timestamp. Any command run
     #   against the server will return a cluster time that can be used here.
     #   Only recognized by server versions 4.0+.
+    # @option options [ Object ] :comment A user-provided
+    #   comment to attach to this command.
+    # @option options [ Boolean ] :show_expanded_events Enables the server to
+    #   send the 'expanded' list of change stream events. The list of additional
+    #   events included with this flag set are: createIndexes, dropIndexes,
+    #   modify, create, shardCollection, reshardCollection,
+    #   refineCollectionShardKey.
     #
     # @note A change stream only allows 'majority' read concern.
     # @note This helper method is preferable to running a raw aggregation with a $changeStream
@@ -429,8 +470,11 @@ module Mongo
     #
     # @since 2.6.0
     def watch(pipeline = [], options = {})
+      view_options = options.dup
+      view_options[:await_data] = true if options[:max_await_time_ms]
+
       Mongo::Collection::View::ChangeStream.new(
-        Mongo::Collection::View.new(collection("#{COMMAND}.aggregate")),
+        Mongo::Collection::View.new(collection("#{COMMAND}.aggregate"), {}, view_options),
         pipeline,
         Mongo::Collection::View::ChangeStream::DATABASE,
         options)

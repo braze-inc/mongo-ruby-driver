@@ -162,6 +162,8 @@ module Mongo
       #   Deprecated and ignored.
       # @param [ Session | nil ] session Optional session to take into account
       #   for mongos pinning. Added in version 2.10.0.
+      # @param [ true | false ] write_aggregation Whether we need a server that
+      #   supports writing aggregations (e.g. with $merge/$out) on secondaries.
       #
       # @return [ Mongo::Server ] A server matching the server preference.
       #
@@ -172,7 +174,7 @@ module Mongo
       #   lint mode is enabled.
       #
       # @since 2.0.0
-      def select_server(cluster, ping = nil, session = nil)
+      def select_server(cluster, ping = nil, session = nil, write_aggregation: false)
         if cluster.topology.is_a?(Cluster::Topology::LoadBalanced)
           return cluster.servers.first
         end
@@ -243,7 +245,7 @@ module Mongo
 =end
 
         loop do
-          server = try_select_server(cluster)
+          server = try_select_server(cluster, write_aggregation: write_aggregation)
 
           if server
             unless cluster.topology.compatible?
@@ -294,11 +296,31 @@ module Mongo
       # Tries to find a suitable server, returns the server if one is available
       # or nil if there isn't a suitable server.
       #
+      # @param [ Mongo::Cluster ] cluster The cluster from which to select
+      #   an eligible server.
+      # @param [ true | false ] write_aggregation Whether we need a server that
+      #   supports writing aggregations (e.g. with $merge/$out) on secondaries.
+      #
       # @return [ Server | nil ] A suitable server, if one exists.
       #
       # @api private
-      def try_select_server(cluster)
-        servers = suitable_servers(cluster)
+      def try_select_server(cluster, write_aggregation: false)
+        servers = if write_aggregation && cluster.replica_set?
+          # 1. Check if ALL servers in cluster support secondary writes.
+          is_write_supported = cluster.servers.reduce(true) do |res, server|
+            res && server.features.merge_out_on_secondary_enabled?
+          end
+
+          if is_write_supported
+            # 2. If all servers support secondary writes, we respect read preference.
+            suitable_servers(cluster)
+          else
+            # 3. Otherwise we fallback to primary for replica set.
+            [cluster.servers.detect(&:primary?)]
+          end
+        else
+          suitable_servers(cluster)
+        end
 
         # This list of servers may be ordered in a specific way
         # by the selector (e.g. for secondary preferred, the first

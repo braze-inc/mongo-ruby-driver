@@ -38,15 +38,28 @@ describe Mongo::Cluster::CursorReaper do
         allow(server).to receive(:address).and_return(address)
       end
     end
+    let(:session) do
+      double(Mongo::Session)
+    end
     let(:cursor_id) { 1 }
     let(:cursor_kill_spec_1) do
       Mongo::Cursor::KillSpec.new(
-        cursor_id: cursor_id, coll_name: 'c', db_name: 'd', service_id: nil,
+        cursor_id: cursor_id,
+        coll_name: 'c',
+        db_name: 'd',
+        server_address: address,
+        connection_global_id: 1,
+        session: session,
       )
     end
     let(:cursor_kill_spec_2) do
       Mongo::Cursor::KillSpec.new(
-        cursor_id: cursor_id, coll_name: 'c', db_name: 'q', service_id: nil,
+        cursor_id: cursor_id,
+        coll_name: 'c',
+        db_name: 'q',
+        server_address: address,
+        connection_global_id: 1,
+        session: session,
       )
     end
     let(:to_kill) { reaper.instance_variable_get(:@to_kill)}
@@ -60,36 +73,40 @@ describe Mongo::Cluster::CursorReaper do
       context 'when there is not a list already for the server' do
 
         before do
-          reaper.schedule_kill_cursor(cursor_kill_spec_1, server)
+          reaper.schedule_kill_cursor(cursor_kill_spec_1)
+          reaper.read_scheduled_kill_specs
         end
 
         it 'initializes the list of op specs to a set' do
-          expect(to_kill.keys).to eq([ address.seed ])
-          expect(to_kill[address.seed]).to eq(Set.new([cursor_kill_spec_1]))
+          expect(to_kill.keys).to eq([ address ])
+          expect(to_kill[address]).to contain_exactly(cursor_kill_spec_1)
         end
       end
 
       context 'when there is a list of ops already for the server' do
 
         before do
-          reaper.schedule_kill_cursor(cursor_kill_spec_1, server)
-          reaper.schedule_kill_cursor(cursor_kill_spec_2, server)
+          reaper.schedule_kill_cursor(cursor_kill_spec_1)
+          reaper.read_scheduled_kill_specs
+          reaper.schedule_kill_cursor(cursor_kill_spec_2)
+          reaper.read_scheduled_kill_specs
         end
 
         it 'adds the op to the server list' do
-          expect(to_kill.keys).to eq([ address.seed ])
-          expect(to_kill[address.seed]).to contain_exactly(cursor_kill_spec_1, cursor_kill_spec_2)
+          expect(to_kill.keys).to eq([ address ])
+          expect(to_kill[address]).to contain_exactly(cursor_kill_spec_1, cursor_kill_spec_2)
         end
 
         context 'when the same op is added more than once' do
 
           before do
-            reaper.schedule_kill_cursor(cursor_kill_spec_2, server)
+            reaper.schedule_kill_cursor(cursor_kill_spec_2)
+            reaper.read_scheduled_kill_specs
           end
 
           it 'does not allow duplicates ops for a server' do
-            expect(to_kill.keys).to eq([ address.seed ])
-            expect(to_kill[address.seed]).to contain_exactly(cursor_kill_spec_1, cursor_kill_spec_2)
+            expect(to_kill.keys).to eq([ address ])
+            expect(to_kill[address]).to contain_exactly(cursor_kill_spec_1, cursor_kill_spec_2)
           end
         end
       end
@@ -98,7 +115,7 @@ describe Mongo::Cluster::CursorReaper do
     context 'when the cursor is not on the list of active cursors' do
 
       before do
-        reaper.schedule_kill_cursor(cursor_kill_spec_1, server)
+        reaper.schedule_kill_cursor(cursor_kill_spec_1)
       end
 
       it 'does not add the kill cursors op spec to the list' do
@@ -189,8 +206,11 @@ describe Mongo::Cluster::CursorReaper do
     around do |example|
       authorized_collection.insert_many(docs)
       periodic_executor.stop!
-      cluster.schedule_kill_cursor(cursor.kill_spec,
-                                   cursor.instance_variable_get(:@server))
+      cluster.schedule_kill_cursor(
+        cursor.kill_spec(
+          cursor.instance_variable_get(:@server)
+        )
+      )
       periodic_executor.flush
       example.run
       periodic_executor.run!
@@ -199,7 +219,12 @@ describe Mongo::Cluster::CursorReaper do
     it 'schedules the kill cursor op' do
       expect {
         cursor.to_a
-      }.to raise_exception(Mongo::Error::OperationFailure)
+        # Mongo::Error::SessionEnded is raised here because the periodic executor
+        # called in around block kills the cursor and closes the session.
+        # This code is normally scheduled in cursor finalizer, so the cursor object
+        # is garbage collected when the code is executed. So, a user won't get
+        # this exception.
+      }.to raise_exception(Mongo::Error::SessionEnded)
     end
   end
 end

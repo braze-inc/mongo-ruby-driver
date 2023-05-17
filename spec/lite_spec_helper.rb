@@ -10,10 +10,6 @@ SERVER_DISCOVERY_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/sdam/**/*.yml
 SDAM_MONITORING_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/sdam_monitoring/*.yml").sort
 SERVER_SELECTION_RTT_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/server_selection_rtt/*.yml").sort
 CRUD_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/crud/**/*.yml").sort
-CRUD2_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/crud_v2/**/*.yml").sort
-RETRYABLE_WRITES_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/retryable_writes/**/*.yml").sort
-RETRYABLE_READS_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/retryable_reads/**/*.yml").sort
-COMMAND_MONITORING_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/command_monitoring/**/*.yml").sort
 CONNECTION_STRING_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/connection_string/*.yml").sort
 URI_OPTIONS_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/uri_options/*.yml").sort
 GRIDFS_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/gridfs/*.yml").sort
@@ -36,7 +32,10 @@ else
   begin
     require 'byebug'
   rescue LoadError
-    require 'ruby-debug'
+    begin
+      require 'ruby-debug'
+    rescue LoadError
+    end
   end
 end
 
@@ -54,6 +53,8 @@ autoload :Benchmark, 'benchmark'
 autoload :IceNine, 'ice_nine'
 autoload :Timecop, 'timecop'
 autoload :ChildProcess, 'childprocess'
+
+require 'rspec/retry'
 
 if BSON::Environment.jruby?
   require 'concurrent-ruby'
@@ -81,19 +82,23 @@ require 'mrss/event_subscriber'
 require 'support/common_shortcuts'
 require 'support/client_registry'
 require 'support/client_registry_macros'
+require 'support/mongos_macros'
+require 'support/macros'
 require 'support/crypt'
 require 'support/json_ext_formatter'
 require 'support/sdam_formatter_integration'
 require 'support/background_thread_registry'
-require 'support/session_registry'
+require 'mrss/session_registry'
 require 'support/local_resource_registry'
 
-if SpecConfig.instance.mri?
+if SpecConfig.instance.mri? && !SpecConfig.instance.windows?
   require 'timeout_interrupt'
 else
   require 'timeout'
   TimeoutInterrupt = Timeout
 end
+
+Mrss.patch_mongo_for_session_registry
 
 class ExampleTimeout < StandardError; end
 
@@ -102,6 +107,8 @@ RSpec.configure do |config|
   config.include(CommonShortcuts::InstanceMethods)
   config.extend(Mrss::LiteConstraints)
   config.include(ClientRegistryMacros)
+  config.include(MongosMacros)
+  config.extend(Mongo::Macros)
 
   if SpecConfig.instance.ci?
     SdamFormatterIntegration.subscribe
@@ -118,14 +125,17 @@ RSpec.configure do |config|
   end
 
   if SpecConfig.instance.ci? && !%w(1 true yes).include?(ENV['INTERACTIVE']&.downcase)
-    # Allow a max of 30 seconds per test.
     # Tests should take under 10 seconds ideally but it seems
     # we have some that run for more than 10 seconds in CI.
     config.around(:each) do |example|
       timeout = if %w(1 true yes).include?(ENV['STRESS']&.downcase)
         210
       else
-        45
+        if BSON::Environment.jruby?
+          90
+        else
+          45
+        end
       end
       TimeoutInterrupt.timeout(timeout, ExampleTimeout) do
         example.run
@@ -157,6 +167,13 @@ RSpec.configure do |config|
 end
 
 if SpecConfig.instance.active_support?
+  require "active_support/version"
+  if ActiveSupport.version >= Gem::Version.new(7)
+    # ActiveSupport wants us to require ALL of it all of the time.
+    # See: https://github.com/rails/rails/issues/43851,
+    # https://github.com/rails/rails/issues/43889, etc.
+    require 'active_support'
+  end
   require "active_support/time"
   require 'mongo/active_support'
 end

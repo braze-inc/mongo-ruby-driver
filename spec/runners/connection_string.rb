@@ -100,7 +100,7 @@ module Mongo
       #
       # @since 2.0.0
       def initialize(test_path)
-        @spec = YAML.load(File.read(test_path))
+        @spec = ::Utils.load_spec_yaml_file(test_path)
         @description = File.basename(test_path)
       end
 
@@ -181,6 +181,14 @@ module Mongo
 
       def write_concern_expectation
         @spec['writeConcern']
+      end
+
+      def num_seeds
+        @spec['numSeeds']
+      end
+
+      def num_hosts
+        @spec['numHosts']
       end
     end
 

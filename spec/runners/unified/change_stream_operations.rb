@@ -14,6 +14,18 @@ module Unified
         if batch_size = args.use('batchSize')
           opts[:batch_size] = batch_size
         end
+        if comment = args.use('comment')
+          opts[:comment] = comment
+        end
+        if full_document = args.use('fullDocument')
+          opts[:full_document] = full_document
+        end
+        if full_document_before_change = args.use('fullDocumentBeforeChange')
+          opts[:full_document_before_change] = full_document_before_change
+        end
+        if args.key?('showExpandedEvents')
+          opts[:show_expanded_events] = args.use!('showExpandedEvents')
+        end
         cs = object.watch(pipeline, **opts)
         name = op.use!('saveResultAsEntity')
         entities.set(:change_stream, name, cs)

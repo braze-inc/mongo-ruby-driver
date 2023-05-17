@@ -126,7 +126,9 @@ describe Mongo::Operation::Insert::OpMsg do
       end
 
       let(:session) do
-        authorized_client.start_session
+        Mongo::Session.new(nil, authorized_client, implicit: true).tap do |session|
+          allow(session).to receive(:session_id).and_return(42)
+        end
       end
 
       context 'when the topology is replica set or sharded' do
@@ -141,7 +143,7 @@ describe Mongo::Operation::Insert::OpMsg do
           authorized_client.command(ping:1)
           RSpec::Mocks.with_temporary_scope do
             expect(Mongo::Protocol::Msg).to receive(:new).with([],
-                                                               { validating_keys: true },
+                                                               {},
                                                                expected_global_args,
                                                                expected_payload_1)
             op.send(:message, connection)
@@ -161,7 +163,7 @@ describe Mongo::Operation::Insert::OpMsg do
           RSpec::Mocks.with_temporary_scope do
             authorized_client.command(ping:1)
             expect(Mongo::Protocol::Msg).to receive(:new).with([],
-                                                               { validating_keys: true },
+                                                               {},
                                                                expected_global_args,
                                                                expected_payload_1)
             op.send(:message, connection)
@@ -179,7 +181,7 @@ describe Mongo::Operation::Insert::OpMsg do
           end
 
           before do
-            session.instance_variable_set(:@options, { implicit: true })
+            session.implicit?.should be true
           end
 
           it 'creates the correct OP_MSG message' do
@@ -188,7 +190,7 @@ describe Mongo::Operation::Insert::OpMsg do
 
               expect(expected_global_args).not_to have_key(:lsid)
               expect(Mongo::Protocol::Msg).to receive(:new).with([],
-                                                                 { validating_keys: true },
+                                                                 {},
                                                                  expected_global_args,
                                                                  expected_payload_1)
               op.send(:message, connection)
@@ -206,8 +208,10 @@ describe Mongo::Operation::Insert::OpMsg do
         context 'when the session is implicit' do
 
           let(:session) do
-            # Use client#get_session so the session is implicit
-            authorized_client.send(:get_session)
+            Mongo::Session.new(nil, authorized_client, implicit: true).tap do |session|
+              allow(session).to receive(:session_id).and_return(42)
+              session.should be_implicit
+            end
           end
 
           context 'when the topology is replica set or sharded' do
@@ -225,7 +229,7 @@ describe Mongo::Operation::Insert::OpMsg do
               authorized_client.command(ping:1)
               RSpec::Mocks.with_temporary_scope do
                 expect(Mongo::Protocol::Msg).to receive(:new).with([:more_to_come],
-                                                                   { validating_keys: true },
+                                                                   {},
                                                                    expected_global_args,
                                                                    expected_payload_1)
                 op.send(:message, connection)
@@ -247,7 +251,7 @@ describe Mongo::Operation::Insert::OpMsg do
               authorized_client.command(ping:1)
               RSpec::Mocks.with_temporary_scope do
                 expect(Mongo::Protocol::Msg).to receive(:new).with([:more_to_come],
-                                                                   { validating_keys: true },
+                                                                   {},
                                                                    expected_global_args,
                                                                    expected_payload_1)
                 op.send(:message, connection)
@@ -264,6 +268,10 @@ describe Mongo::Operation::Insert::OpMsg do
             authorized_client.start_session
           end
 
+          before do
+            session.should_not be_implicit
+          end
+
           let(:expected_global_args) do
             global_args.dup.tap do |args|
               args.delete(:lsid)
@@ -275,7 +283,7 @@ describe Mongo::Operation::Insert::OpMsg do
             authorized_client.command(ping:1)
             RSpec::Mocks.with_temporary_scope do
               expect(Mongo::Protocol::Msg).to receive(:new).with([:more_to_come],
-                                                                 { validating_keys: true },
+                                                                 {},
                                                                  expected_global_args,
                                                                  expected_payload_1)
               op.send(:message, connection)

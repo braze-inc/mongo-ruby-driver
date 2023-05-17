@@ -236,12 +236,12 @@ when querying and their corresponding methods as examples.
        each ``GETMORE`` operation.
    * - ``comment(String)``
      - Adds a comment to the query.
-   
+
    * - ``explain(**opts)``
      - Returns the query plan for the query. Pass the :manual:`explain options
        </reference/command/explain/>` via the keyword arguments using symbol
        keys.
-     
+
        .. code-block:: ruby
 
          # All server versions - default explain behavior
@@ -251,7 +251,7 @@ when querying and their corresponding methods as examples.
          client[:artists].find.explain(verbosity: :query_planner)
          client[:artists].find.explain(verbosity: :execution_stats)
          client[:artists].find.explain(verbosity: :all_plans_execution)
-         
+
          # Alternative syntax using camel case
          client[:artists].find.explain(verbosity: "queryPlanner")
          client[:artists].find.explain(verbosity: "executionStats")
@@ -259,45 +259,48 @@ when querying and their corresponding methods as examples.
 
          # MongoDB 2.6
          client[:artists].find.explain(verbose: true)
-         
+
        The explain operation supports ``:session`` and ``:read``
        (for read preference) options. To specify these options for a single
        explain operation, they must be given to the ``find`` method as
        follows:
-     
+
        .. code-block:: ruby
 
          client[:artists].find({}, session: session).explain
 
          client[:artists].find({}, read: {mode: :secondary_preferred}).explain
-       
+
        If the read preference option is specified on the client or on the
        collection, it will be passed to the explain operation:
-     
+
        .. code-block:: ruby
 
          client[:artists, read: {mode: :secondary_preferred}].find.explain
-       
+
        Note that the session option is not accepted when creating a collection
        object.
-       
+
        The explain command does not support passing the read concern option.
        If the read concern is specifed on the client or collection level, or
        if the read concern is specified as a find option, it will NOT be passed
        by the driver to the explain command.
-       
+
        .. note::
-       
+
          The information returned by the server for the ``explain`` command
          varies with server version and deployment topology. The driver's
          ``explain`` method returns whatever the server provided.
-         
+
          **The return value of ``explain`` method is not part of the driver's
          public API and depends on the server version and deployment topology.**
-         
+
    * - ``hint(Hash)``
      - Provides the query with an
        :manual:`index hint</reference/method/cursor.hint/>` to use.
+   * - ``let(Hash)``
+     - Mapping of :manual:`variables</reference/command/find/#std-label-find-let-syntax>`
+       to use in the query.
    * - ``limit(Integer)``
      - Limits the number of returned documents to the provided value.
    * - ``max_scan(Integer)``
@@ -356,6 +359,15 @@ Additional Query Operations
 
   Note that unlike ``count_documents``, ``estimated_document_count`` does not
   accept a filter.
+
+  The ``count`` server command is used to implement ``estimated_document_count``.
+  More information can be found via `Count: Behavior <https://www.mongodb.com/docs/manual/reference/command/count/#behavior>`_.
+
+  Due to an oversight in MongoDB versions 5.0.0-5.0.7, the ``count`` command,
+  which ``estimated_document_count`` uses in its implementation, was not
+  included in v1 of the Stable API. Therefore, users of the Stable API with
+  ``estimated_document_count`` are recommended to upgrade their server version to
+  5.0.8+ or set ``api_strict: false`` to avoid encountering errors.
 
 .. code-block:: ruby
 
@@ -693,6 +705,9 @@ including ``update_one``, ``update_many``, ``replace_one``,
        ``replace_one`` commands, and on server versions 4.4 and newer for
        ``find_one_and_delete``, ``find_one_and_update``, and ``find_one_and_replace``
        commands.
+   * - ``let(Hash)``
+     - Mapping of :manual:`variables</reference/command/update/#std-label-update-let-syntax>`
+       to use for this operation.
    * - ``projection``
      - The fields to exclude or include in the operation result (only available
        on ``find_one_and_delete``, ``find_one_and_replace``, and
@@ -778,6 +793,9 @@ to ``delete_one`` and ``delete_many`` operations.
      - The index to use for this operation. May be specified as a Hash
        (e.g. { _id: 1 }) or as a String (e.g. "_id_"). Supported on MongoDB
        server versions 4.4 and newer.
+   * - ``let(Hash)``
+     - Mapping of :manual:`variables</reference/command/delete/#std-label-delete-let-syntax>`
+       to use for this operation.
    * - ``session``
      - The session to use for this operation.
 
@@ -792,7 +810,7 @@ Write Concern
 All write operations in MongoDB are executed with a write concern which is
 the level of acknowledgment requested from MongoDB for the particular write.
 More information about write concerns in general is available in the
-`MongoDB manual <https://docs.mongodb.com/manual/reference/write-concern/>`_.
+`MongoDB manual <https://mongodb.com/docs/manual/reference/write-concern/>`_.
 
 The Ruby driver supports specifying write concern on client, collection,
 session (for transactions on that session), transaction, GridFS bucket
@@ -954,6 +972,18 @@ Write concern can also be manually specified in ``Database#command``:
 Note that writeConcern here is part of the operation rather than options,
 and the syntax is the camel case one that MongoDB server recognizes, not the
 underscore one that Ruby driver uses.
+
+.. _dots-dollars-in-field-names:
+
+Field Names with Dots/Periods (.) and Dollar Signs ($)
+======================================================
+
+Starting in Mongo Ruby Driver version 2.18.0, the ability to work with fields
+that begin with dollar signs ($) and fields with dots/periods (.) in them is available.
+In Driver version 2.17.0 and earlier, any attempt to work with dotted or dollared
+fields would result in an ``IllegalKey`` error being raised. See the MongoDB docs
+on `Field Names with Periods (.) and Dollar Signs ($) <https://www.mongodb.com/docs/manual/core/dot-dollar-considerations/>`_
+for more information on working with these types of fields.
 
 A Note about the BSON Symbol type
 =================================

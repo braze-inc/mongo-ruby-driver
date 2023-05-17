@@ -70,7 +70,7 @@ module Mongo
             # If a query with a limit is performed, the query cache will
             # re-use results from an earlier query with the same or larger
             # limit, and then impose the lower limit during iteration.
-            limit_for_cached_query = respond_to?(:limit) ? limit : nil
+            limit_for_cached_query = respond_to?(:limit) ? QueryCache.normalized_limit(limit) : nil
           end
 
           if block_given?
@@ -114,11 +114,9 @@ module Mongo
 
         def select_cursor(session)
           if respond_to?(:write?, true) && write?
-            server = server_selector.select_server(cluster, nil, session)
+            server = server_selector.select_server(cluster, nil, session, write_aggregation: true)
             result = send_initial_query(server, session)
 
-            # RUBY-2367: This will be updated to allow the query cache to
-            # cache cursors with multi-batch results.
             if use_query_cache?
               CachingCursor.new(view, result, server, session: session)
             else
@@ -151,7 +149,7 @@ module Mongo
           }
         end
 
-        def initial_query_op(server, session)
+        def initial_query_op(session)
           spec = {
             coll_name: collection.name,
             filter: filter,
@@ -161,6 +159,7 @@ module Mongo
             collation: collation,
             sort: sort,
             skip: skip,
+            let: options[:let],
             limit: limit,
             allow_disk_use: options[:allow_disk_use],
             read: read,
@@ -171,6 +170,7 @@ module Mongo
             max_time_ms: options[:max_time_ms],
             max_value: options[:max_value],
             min_value: options[:min_value],
+            no_cursor_timeout: options[:no_cursor_timeout],
             return_key: options[:return_key],
             show_disk_loc: options[:show_disk_loc],
             comment: options[:comment],
@@ -194,7 +194,7 @@ module Mongo
         end
 
         def send_initial_query(server, session = nil)
-          initial_query_op(server, session).execute(server, context: Operation::Context.new(client: client, session: session))
+          initial_query_op(session).execute(server, context: Operation::Context.new(client: client, session: session))
         end
 
         def use_query_cache?

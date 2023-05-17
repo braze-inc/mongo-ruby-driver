@@ -24,6 +24,7 @@ module Mongo
     class Connection < ConnectionBase
       include Monitoring::Publishable
       include Retryable
+      include Id
       extend Forwardable
 
       # The ping command.
@@ -105,6 +106,7 @@ module Mongo
         end
 
         @id = server.next_connection_id
+        @global_id = self.class.next_id
         @monitoring = server.monitoring
         @options = options.freeze
         @server = server
@@ -112,6 +114,7 @@ module Mongo
         @last_checkin = nil
         @auth_mechanism = nil
         @pid = Process.pid
+        @pinned = false
 
         publish_cmap_event(
           Monitoring::Event::Cmap::ConnectionCreated.new(address, id)
@@ -128,6 +131,10 @@ module Mongo
       #
       # @since 2.9.0
       attr_reader :id
+
+      # @return [ Integer ] The global ID for the connection. This will be unique
+      # across all connections.
+      attr_reader :global_id
 
       # The connection pool from which this connection was created.
       # May be nil.
@@ -152,6 +159,32 @@ module Mongo
       # @api private
       def error?
         !!@error
+      end
+
+      # Whether the connection is used by a transaction or cursor operations.
+      #
+      # Pinned connections should not be disconnected and removed from a
+      # connection pool if they are idle or stale.
+      #
+      # # @return [ true | false ] Whether connection is pinned.
+      #
+      # @api private
+      def pinned?
+        @pinned
+      end
+
+      # Mark the connection as pinned.
+      #
+      # @api private
+      def pin
+        @pinned = true
+      end
+
+      # Mark the connection as not pinned.
+      #
+      # @api private
+      def unpin
+        @pinned = false
       end
 
       # Establishes a network connection to the target address.

@@ -126,6 +126,10 @@ class SpecConfig
     !!(RbConfig::CONFIG['host_os'].downcase =~ /\bdarwin/)
   end
 
+  def windows?
+    ENV['OS'] == 'Windows_NT' && !RUBY_PLATFORM.match?(/cygwin/)
+  end
+
   def platform
     RUBY_PLATFORM
   end
@@ -296,7 +300,11 @@ EOT
   end
 
   def local_client_pem_path
-    "#{ssl_certs_dir}/client.pem"
+    if (algo = ENV['OCSP_ALGORITHM'])&.empty?
+      "#{ssl_certs_dir}/client.pem"
+    else
+      Pathname.new("#{spec_root}/support/ocsp/#{algo}/server.pem")
+    end
   end
 
   def client_pem_path
@@ -360,6 +368,11 @@ EOT
     'ruby-driver'.freeze
   end
 
+  # Whether FLE tests should be enabled
+  def fle?
+    ENV['FLE']
+  end
+
   # AWS IAM user access key id
   def fle_aws_key
     ENV['MONGO_RUBY_DRIVER_AWS_KEY']
@@ -380,6 +393,74 @@ EOT
     ENV['MONGO_RUBY_DRIVER_AWS_ARN']
   end
 
+  def fle_azure_tenant_id
+    ENV['MONGO_RUBY_DRIVER_AZURE_TENANT_ID']
+  end
+
+  def fle_azure_client_id
+    ENV['MONGO_RUBY_DRIVER_AZURE_CLIENT_ID']
+  end
+
+  def fle_azure_client_secret
+    ENV['MONGO_RUBY_DRIVER_AZURE_CLIENT_SECRET']
+  end
+
+  def fle_azure_identity_platform_endpoint
+    ENV['MONGO_RUBY_DRIVER_AZURE_IDENTITY_PLATFORM_ENDPOINT']
+  end
+
+  def fle_azure_key_vault_endpoint
+    ENV['MONGO_RUBY_DRIVER_AZURE_KEY_VAULT_ENDPOINT']
+  end
+
+  def fle_azure_key_name
+    ENV['MONGO_RUBY_DRIVER_AZURE_KEY_NAME']
+  end
+
+  def fle_gcp_email
+    ENV['MONGO_RUBY_DRIVER_GCP_EMAIL']
+  end
+
+  def fle_gcp_private_key
+    ENV['MONGO_RUBY_DRIVER_GCP_PRIVATE_KEY']
+  end
+
+  def fle_gcp_endpoint
+    ENV['MONGO_RUBY_DRIVER_GCP_ENDPOINT']
+  end
+
+  def fle_gcp_project_id
+    ENV['MONGO_RUBY_DRIVER_GCP_PROJECT_ID']
+  end
+
+  def fle_gcp_location
+    ENV['MONGO_RUBY_DRIVER_GCP_LOCATION']
+  end
+
+  def fle_gcp_key_ring
+    ENV['MONGO_RUBY_DRIVER_GCP_KEY_RING']
+  end
+
+  def fle_gcp_key_name
+    ENV['MONGO_RUBY_DRIVER_GCP_KEY_NAME']
+  end
+
+  def fle_gcp_key_version
+    ENV['MONGO_RUBY_DRIVER_GCP_KEY_VERSION']
+  end
+
+  def fle_kmip_endpoint
+    "localhost:5698"
+  end
+
+  def fle_kmip_tls_ca_file
+    "#{spec_root}/../.evergreen/x509gen/ca.pem"
+  end
+
+  def fle_kmip_tls_certificate_key_file
+    "#{spec_root}/../.evergreen/x509gen/client.pem"
+  end
+
   def mongocryptd_port
     if ENV['MONGO_RUBY_DRIVER_MONGOCRYPTD_PORT'] &&
       !ENV['MONGO_RUBY_DRIVER_MONGOCRYPTD_PORT'].empty?
@@ -388,6 +469,10 @@ EOT
     else
       27020
     end
+  end
+
+  def crypt_shared_lib_path
+    ENV['MONGO_RUBY_DRIVER_CRYPT_SHARED_LIB_PATH']
   end
 
   def auth?
@@ -594,6 +679,10 @@ EOT
         { role: Mongo::Auth::Roles::DATABASE_ADMIN, db: 'retryable-writes-tests' },
         { role: Mongo::Auth::Roles::READ_WRITE, db: 'ts-tests' },
         { role: Mongo::Auth::Roles::DATABASE_ADMIN, db: 'ts-tests' },
+        { role: Mongo::Auth::Roles::READ_WRITE, db: 'ci-tests' },
+        { role: Mongo::Auth::Roles::DATABASE_ADMIN, db: 'ci-tests' },
+        { role: Mongo::Auth::Roles::READ_WRITE, db: 'papi-tests' },
+        { role: Mongo::Auth::Roles::DATABASE_ADMIN, db: 'papi-tests' },
       ]
     )
   end

@@ -5,7 +5,10 @@ require 'spec_helper'
 
 require 'runners/crud'
 
-describe 'Retryable writes spec tests' do
+base = "#{CURRENT_PATH}/spec_tests/data/retryable_writes"
+RETRYABLE_WRITES_TESTS = Dir.glob("#{base}/legacy/**/*.yml").sort
+
+describe 'Retryable writes spec tests - legacy' do
   require_wired_tiger
   require_no_multi_mongos
 

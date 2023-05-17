@@ -15,9 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-require 'mongo/operation/delete/command'
 require 'mongo/operation/delete/op_msg'
-require 'mongo/operation/delete/legacy'
 require 'mongo/operation/delete/result'
 require 'mongo/operation/delete/bulk_result'
 

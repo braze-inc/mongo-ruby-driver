@@ -110,8 +110,7 @@ EOT
         expected_command = expected_event.delete('command')
         actual_command = actual_event.delete('command')
 
-        # Hash#compact is ruby 2.4+
-        expected_presence = expected_command.select { |k, v| !v.nil? }
+        expected_presence = expected_command.compact
         expected_absence = expected_command.select { |k, v| v.nil? }
 
         expected_presence.each do |k, v|
@@ -159,6 +158,12 @@ EOT
             else
               verify_hash_items_equal(expected, actual, k)
             end
+          end
+        when Array
+          expect(actual).to be_a(Array)
+          expect(actual.size).to eq(expected.size)
+          expected.zip(actual).each do |pair|
+            verify_result(pair.first, pair.last)
           end
         else
           expect(actual).to eq(expected)

@@ -9,6 +9,8 @@ require 'runners/unified/test'
 require 'runners/unified/test_group'
 
 def define_unified_spec_tests(base_path, paths, expect_failure: false)
+  config_override :validate_update_replace, true
+
   paths.each do |path|
     basename = path[base_path.length+1...path.length]
     context basename do
@@ -61,13 +63,18 @@ def define_unified_spec_tests(base_path, paths, expect_failure: false)
               begin
                 test.create_entities
                 test.set_initial_data
-                lambda do
+                begin
                   test.run
                   test.assert_outcome
                   test.assert_events
                 # HACK: other errors are possible and likely will need to
                 # be added here later as the tests evolve.
-                end.should raise_error(Mongo::Error::OperationFailure)
+                rescue Mongo::Error::OperationFailure, Unified::Error::UnsupportedOperation
+                rescue => e
+                  fail "Expected to raise Mongo::Error::OperationFailure or Unified::Error::UnsupportedOperation, got #{e}"
+                else
+                  fail "Expected to raise Mongo::Error::OperationFailure or Unified::Error::UnsupportedOperation, but no error was raised"
+                end
               ensure
                 test.cleanup
               end

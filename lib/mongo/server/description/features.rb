@@ -35,9 +35,13 @@ module Mongo
         # -  8 => 4.2
         # -  9 => 4.4
         # - 13 => 5.0
+        # - 14 => 5.1
+        # - 17 => 6.0
         #
         # @since 2.0.0
         MAPPINGS = {
+          merge_out_on_secondary: 13,
+          get_more_comment: 9,
           retryable_write_error_label: 9,
           commit_quorum: 9,
           # Server versions older than 4.2 do not reliably validate options
@@ -78,7 +82,7 @@ module Mongo
         # The wire protocol versions that this version of the driver supports.
         #
         # @since 2.0.0
-        DRIVER_WIRE_VERSIONS = (2..13).freeze
+        DRIVER_WIRE_VERSIONS = (6..17).freeze
 
         # Create the methods for each mapping to tell if they are supported.
         #

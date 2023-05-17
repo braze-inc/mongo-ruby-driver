@@ -35,12 +35,13 @@ module Mongo
       # @param [ String ] input The data to be encrypted/decrypted
       # @param [ true | false ] decrypt Whether this method is decrypting. Default is
       #   false, which means the method will create an encryption cipher by default
+      # @param [ Symbol ] mode AES mode of operation
       #
       # @return [ String ] Output
       # @raise [ Exception ] Exceptions raised during encryption are propagated
       #   to caller.
-      def aes(key, iv, input, decrypt: false)
-        cipher = OpenSSL::Cipher::AES.new(256, :CBC)
+      def aes(key, iv, input, decrypt: false, mode: :CBC)
+        cipher = OpenSSL::Cipher::AES.new(256, mode)
 
         decrypt ? cipher.decrypt : cipher.encrypt
         cipher.key = key
@@ -88,6 +89,28 @@ module Mongo
         Digest::SHA2.new(256).digest(input)
       end
       module_function :hash_sha256
+
+      # An RSASSA-PKCS1-v1_5 with SHA-256 signature function.
+      #
+      # @param [ String ] key The PKCS#8 private key in DER format, base64 encoded.
+      # @param [ String ] input The data to be signed.
+      #
+      # @return [ String ] The signature.
+      def rsaes_pkcs_signature(key, input)
+        private_key = if BSON::Environment.jruby?
+          # JRuby cannot read DER format, we need to convert key into PEM first.
+          key_pem = [
+            "-----BEGIN PRIVATE KEY-----",
+            Base64.strict_encode64(Base64.decode64(key)).scan(/.{1,64}/),
+            "-----END PRIVATE KEY-----",
+          ].join("\n")
+          OpenSSL::PKey::RSA.new(key_pem)
+        else
+          OpenSSL::PKey.read(Base64.decode64(key))
+        end
+        private_key.sign(OpenSSL::Digest::SHA256.new, input)
+      end
+      module_function :rsaes_pkcs_signature
     end
   end
 end

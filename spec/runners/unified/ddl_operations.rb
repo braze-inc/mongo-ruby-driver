@@ -7,7 +7,13 @@ module Unified
 
     def list_databases(op)
       client = entities.get(:client, op.use!('object'))
-      client.list_databases
+      use_arguments(op) do |args|
+        opts = {}
+        if session = args.use('session')
+          opts[:session] = entities.get(:session, session)
+        end
+        client.list_databases({}, false, **opts)
+      end
     end
 
     def create_collection(op)
@@ -24,7 +30,30 @@ module Unified
         if expire_after_seconds = args.use('expireAfterSeconds')
           collection_opts[:expire_after] = expire_after_seconds
         end
+        if clustered_index = args.use('clusteredIndex')
+          collection_opts[:clustered_index] = clustered_index
+        end
+        if change_stream_pre_and_post_images = args.use('changeStreamPreAndPostImages')
+          collection_opts[:change_stream_pre_and_post_images] = change_stream_pre_and_post_images
+        end
+        if view_on = args.use('viewOn')
+          collection_opts[:view_on] = view_on
+        end
         database[args.use!('collection'), collection_opts].create(**opts)
+      end
+    end
+
+    def list_collections(op)
+      database = entities.get(:database, op.use!('object'))
+      use_arguments(op) do |args|
+        opts = {}
+        if session = args.use('session')
+          opts[:session] = entities.get(:session, session)
+        end
+        if filter = args.use('filter')
+          opts[:filter] = filter
+        end
+        database.list_collections(**opts)
       end
     end
 
@@ -33,6 +62,23 @@ module Unified
       use_arguments(op) do |args|
         collection = database[args.use!('collection')]
         collection.drop
+      end
+    end
+
+    def rename(op)
+      collection = entities.get(:collection, op.use!('object'))
+      use_arguments(op) do |args|
+        to = args.use!('to')
+        cmd = {
+          renameCollection: "#{collection.database.name}.#{collection.name}",
+          to: "#{collection.database.name}.#{to}"
+        }
+
+        if args.key?("dropTarget")
+          cmd[:dropTarget] = args.use("dropTarget")
+        end
+
+        collection.client.use(:admin).command(**cmd)
       end
     end
 
@@ -58,6 +104,17 @@ module Unified
       assert_collection_exists(op, false)
     end
 
+    def list_indexes(op)
+      collection = entities.get(:collection, op.use!('object'))
+      use_arguments(op) do |args|
+        opts = {}
+        if session = args.use('session')
+          opts[:session] = entities.get(:session, session)
+        end
+        collection.indexes(**opts).to_a
+      end
+    end
+
     def create_index(op)
       collection = entities.get(:collection, op.use!('object'))
       use_arguments(op) do |args|
@@ -73,6 +130,22 @@ module Unified
         )
       end
     end
+
+    def drop_index(op)
+      collection = entities.get(:collection, op.use!('object'))
+      use_arguments(op) do |args|
+        opts = {}
+        if session = args.use('session')
+          opts[:session] = entities.get(:session, session)
+        end
+
+        collection.indexes.drop_one(
+          args.use!('name'),
+          **opts,
+        )
+      end
+    end
+
 
     def assert_index_exists(op)
       consume_test_runner(op)

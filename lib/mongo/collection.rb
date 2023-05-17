@@ -17,6 +17,8 @@
 
 require 'mongo/bulk_write'
 require 'mongo/collection/view'
+require 'mongo/collection/helpers'
+require 'mongo/collection/queryable_encryption'
 
 module Mongo
 
@@ -27,6 +29,8 @@ module Mongo
   class Collection
     extend Forwardable
     include Retryable
+    include QueryableEncryption
+    include Helpers
 
     # The capped option.
     #
@@ -47,8 +51,8 @@ module Mongo
     # @return [ Hash ] The collection options.
     attr_reader :options
 
-    # Get client, cluster, read preference, and write concern from client.
-    def_delegators :database, :client, :cluster
+    # Get client, cluster, read preference, write concern, and encrypted_fields_map from client.
+    def_delegators :database, :client, :cluster, :encrypted_fields_map
 
     # Delegate to the cluster for the next primary.
     def_delegators :cluster, :next_primary
@@ -58,10 +62,17 @@ module Mongo
     # @since 2.1.0
     CHANGEABLE_OPTIONS = [ :read, :read_concern, :write, :write_concern ].freeze
 
-    # Options that can be used for creating a time-series collection.
-    TIME_SERIES_OPTIONS = {
+    # Options map to transform create collection options.
+    #
+    # @api private
+    CREATE_COLLECTION_OPTIONS = {
       :time_series => :timeseries,
-      :expire_after => :expireAfterSeconds
+      :expire_after => :expireAfterSeconds,
+      :clustered_index => :clusteredIndex,
+      :change_stream_pre_and_post_images => :changeStreamPreAndPostImages,
+      :encrypted_fields => :encryptedFields,
+      :validator => :validator,
+      :view_on => :viewOn
     }
 
     # Check if a collection is equal to another object. Will check the name and
@@ -72,7 +83,7 @@ module Mongo
     #
     # @param [ Object ] other The object to check.
     #
-    # @return [ true, false ] If the objects are equal.
+    # @return [ true | false ] If the objects are equal.
     #
     # @since 2.0.0
     def ==(other)
@@ -89,15 +100,59 @@ module Mongo
     # @param [ String, Symbol ] name The collection name.
     # @param [ Hash ] options The collection options.
     #
-    # @option options [ Hash ] :write Deprecated. Equivalent to :write_concern
-    #   option.
-    # @option options [ Hash ] :write_concern The write concern options.
-    #   Can be :w => Integer|String, :fsync => Boolean, :j => Boolean.
-    # @option options [ Hash ] :time_series Create a time-series collection.
-    #   See https://docs.mongodb.com/manual/core/timeseries-collections/ for more
-    #   information about time-series collection.
-    # @option options [ Integer ] :expire_after Number indicating
+    # @option opts [ true | false ] :capped Create a fixed-sized collection.
+    # @option opts [ Hash ] :change_stream_pre_and_post_images Used to enable
+    #   pre- and post-images on the created collection.
+    #   The hash may have the following items:
+    #   - *:enabled* -- true or false.
+    # @option opts [ Hash ] :clustered_index Create a clustered index.
+    #   This option specifies how this collection should be clustered on _id.
+    #   The hash may have the following items:
+    #   - *:key* -- The clustered index key field. Must be set to { _id: 1 }.
+    #   - *:unique* -- Must be set to true. The collection will not accept
+    #     inserted or updated documents where the clustered index key value
+    #     matches an existing value in the index.
+    #   - *:name* -- Optional. A name that uniquely identifies the clustered index.
+    # @option opts [ Hash ] :collation The collation to use.
+    # @option opts [ Hash ] :encrypted_fields Hash describing encrypted fields
+    #   for queryable encryption.
+    # @option opts [ Integer ] :expire_after Number indicating
     #   after how many seconds old time-series data should be deleted.
+    # @option opts [ Integer ] :max The maximum number of documents in a
+    #   capped collection. The size limit takes precedents over max.
+    # @option opts [ Array<Hash> ] :pipeline An array of pipeline stages.
+    #   A view will be created by applying this pipeline to the view_on
+    #   collection or view.
+    # @option options [ Hash ] :read_concern The read concern options hash,
+    #   with the following optional keys:
+    #   - *:level* -- the read preference level as a symbol; valid values
+    #      are *:local*, *:majority*, and *:snapshot*
+    # @option options [ Hash ] :read The read preference options.
+    #   The hash may have the following items:
+    #   - *:mode* -- read preference specified as a symbol; valid values are
+    #     *:primary*, *:primary_preferred*, *:secondary*, *:secondary_preferred*
+    #     and *:nearest*.
+    #   - *:tag_sets* -- an array of hashes.
+    #   - *:local_threshold*.
+    # @option opts [ Session ] :session The session to use for the operation.
+    # @option opts [ Integer ] :size The size of the capped collection.
+    # @option opts [ Hash ] :time_series Create a time-series collection.
+    #   The hash may have the following items:
+    #   - *:timeField* -- The name of the field which contains the date in each
+    #     time series document.
+    #   - *:metaField* -- The name of the field which contains metadata in each
+    #     time series document.
+    #   - *:granularity* -- Set the granularity to the value that is the closest
+    #     match to the time span between consecutive incoming measurements.
+    #     Possible values are "seconds" (default), "minutes", and "hours".
+    # @option opts [ Hash ] :validator Hash describing document validation
+    #   options for the collection.
+    # @option opts [ String ] :view_on The name of the source collection or
+    #   view from which to create a view.
+    # @option opts [ Hash ] :write Deprecated. Equivalent to :write_concern
+    #   option.
+    # @option opts [ Hash ] :write_concern The write concern options.
+    #   Can be :w => Integer|String, :fsync => Boolean, :j => Boolean.
     #
     # @since 2.0.0
     def initialize(database, name, options = {})
@@ -189,16 +244,36 @@ module Mongo
       wc
     end
 
-    # Provides a new collection with either a new read preference or new write concern
-    # merged over the existing read preference / write concern.
+    # Provides a new collection with either a new read preference, new read
+    # concern or new write concern merged over the existing read preference /
+    # read concern / write concern.
     #
     # @example Get a collection with a changed read preference.
     #   collection.with(read: { mode: :primary_preferred })
+
+    # @example Get a collection with a changed read concern.
+    #   collection.with(read_concern: { level: :majority })
     #
     # @example Get a collection with a changed write concern.
     #   collection.with(write_concern: { w:  3 })
-
+    #
     # @param [ Hash ] new_options The new options to use.
+    #
+    # @option new_options [ Hash ] :read The read preference options.
+    #   The hash may have the following items:
+    #   - *:mode* -- read preference specified as a symbol; valid values are
+    #     *:primary*, *:primary_preferred*, *:secondary*, *:secondary_preferred*
+    #     and *:nearest*.
+    #   - *:tag_sets* -- an array of hashes.
+    #   - *:local_threshold*.
+    # @option new_options [ Hash ] :read_concern The read concern options hash,
+    #   with the following optional keys:
+    #   - *:level* -- the read preference level as a symbol; valid values
+    #      are *:local*, *:majority*, and *:snapshot*
+    # @option new_options [ Hash ] :write Deprecated. Equivalent to :write_concern
+    #   option.
+    # @option new_options [ Hash ] :write_concern The write concern options.
+    #   Can be :w => Integer|String, :fsync => Boolean, :j => Boolean.
     #
     # @return [ Mongo::Collection ] A new collection instance.
     #
@@ -222,7 +297,7 @@ module Mongo
     # @example Is the collection capped?
     #   collection.capped?
     #
-    # @return [ true, false ] If the collection is capped.
+    # @return [ true | false ] If the collection is capped.
     #
     # @since 2.0.0
     def capped?
@@ -236,11 +311,48 @@ module Mongo
     #
     # @param [ Hash ] opts The options for the create operation.
     #
-    # @option opts [ Session ] :session The session to use for the operation.
-    # @option opts [ Hash ] :write_concern The write concern options.
-    # @option opts [ Hash ] :time_series Create a time-series collection.
+    # @option opts [ true | false ] :capped Create a fixed-sized collection.
+    # @option opts [ Hash ] :change_stream_pre_and_post_images Used to enable
+    #   pre- and post-images on the created collection.
+    #   The hash may have the following items:
+    #   - *:enabled* -- true or false.
+    # @option opts [ Hash ] :clustered_index Create a clustered index.
+    #   This option specifies how this collection should be clustered on _id.
+    #   The hash may have the following items:
+    #   - *:key* -- The clustered index key field. Must be set to { _id: 1 }.
+    #   - *:unique* -- Must be set to true. The collection will not accept
+    #     inserted or updated documents where the clustered index key value
+    #     matches an existing value in the index.
+    #   - *:name* -- Optional. A name that uniquely identifies the clustered index.
+    # @option opts [ Hash ] :collation The collation to use.
+    # @option opts [ Hash ] :encrypted_fields Hash describing encrypted fields
+    #   for queryable encryption.
     # @option opts [ Integer ] :expire_after Number indicating
     #   after how many seconds old time-series data should be deleted.
+    # @option opts [ Integer ] :max The maximum number of documents in a
+    #   capped collection. The size limit takes precedents over max.
+    # @option opts [ Array<Hash> ] :pipeline An array of pipeline stages.
+    #   A view will be created by applying this pipeline to the view_on
+    #   collection or view.
+    # @option opts [ Session ] :session The session to use for the operation.
+    # @option opts [ Integer ] :size The size of the capped collection.
+    # @option opts [ Hash ] :time_series Create a time-series collection.
+    #   The hash may have the following items:
+    #   - *:timeField* -- The name of the field which contains the date in each
+    #     time series document.
+    #   - *:metaField* -- The name of the field which contains metadata in each
+    #     time series document.
+    #   - *:granularity* -- Set the granularity to the value that is the closest
+    #     match to the time span between consecutive incoming measurements.
+    #     Possible values are "seconds" (default), "minutes", and "hours".
+    # @option opts [ Hash ] :validator Hash describing document validation
+    #   options for the collection.
+    # @option opts [ String ] :view_on The name of the source collection or
+    #   view from which to create a view.
+    # @option opts [ Hash ] :write Deprecated. Equivalent to :write_concern
+    #   option.
+    # @option opts [ Hash ] :write_concern The write concern options.
+    #   Can be :w => Integer|String, :fsync => Boolean, :j => Boolean.
     #
     # @return [ Result ] The result of the command.
     #
@@ -253,9 +365,9 @@ module Mongo
       options = Hash[self.options.reject do |key, value|
         %w(read read_preference read_concern).include?(key.to_s)
       end]
-      options.update(Utils.slice_hash(opts, *TIME_SERIES_OPTIONS.keys))
-      # Converting Ruby spelled time series options to server style.
-      TIME_SERIES_OPTIONS.each do |ruby_key, server_key|
+      options.update(opts.slice(*CREATE_COLLECTION_OPTIONS.keys))
+      # Converting Ruby options to server style.
+      CREATE_COLLECTION_OPTIONS.each do |ruby_key, server_key|
         if options.key?(ruby_key)
           options[server_key] = options.delete(ruby_key)
         end
@@ -271,20 +383,24 @@ module Mongo
         end
 
         context = Operation::Context.new(client: client, session: session)
-        Operation::Create.new(
-          selector: operation,
-          db_name: database.name,
-          write_concern: write_concern,
-          session: session,
-          # Note that these are collection options, collation isn't
-          # taken from options passed to the create method.
-          collation: options[:collation] || options['collation'],
-        ).execute(next_primary(nil, session), context: context)
+        maybe_create_qe_collections(opts[:encrypted_fields], client, session) do |encrypted_fields|
+          Operation::Create.new(
+            selector: operation,
+            db_name: database.name,
+            write_concern: write_concern,
+            session: session,
+            # Note that these are collection options, collation isn't
+            # taken from options passed to the create method.
+            collation: options[:collation] || options['collation'],
+            encrypted_fields: encrypted_fields,
+            validator: options[:validator],
+          ).execute(next_primary(nil, session), context: context)
+        end
       end
     end
 
     # Drop the collection. Will also drop all indexes associated with the
-    # collection.
+    # collection, as well as associated queryable encryption collections.
     #
     # @note An error returned if the collection doesn't exist is suppressed.
     #
@@ -293,33 +409,32 @@ module Mongo
     #
     # @param [ Hash ] opts The options for the drop operation.
     #
-    # @option options [ Session ] :session The session to use for the operation.
+    # @option opts [ Session ] :session The session to use for the operation.
     # @option opts [ Hash ] :write_concern The write concern options.
+    # @option opts [ Hash | nil ] :encrypted_fields Encrypted fields hash that
+    #   was provided to `create` collection helper.
     #
     # @return [ Result ] The result of the command.
     #
     # @since 2.0.0
     def drop(opts = {})
       client.send(:with_session, opts) do |session|
-        temp_write_concern = write_concern
-        write_concern = if opts[:write_concern]
-          WriteConcern.get(opts[:write_concern])
-        else
-          temp_write_concern
+        maybe_drop_emm_collections(opts[:encrypted_fields], client, session) do
+          temp_write_concern = write_concern
+          write_concern = if opts[:write_concern]
+            WriteConcern.get(opts[:write_concern])
+          else
+            temp_write_concern
+          end
+          context = Operation::Context.new(client: client, session: session)
+          operation = Operation::Drop.new({
+            selector: { :drop => name },
+            db_name: database.name,
+            write_concern: write_concern,
+            session: session,
+          })
+          do_drop(operation, session, context)
         end
-        Operation::Drop.new({
-                              selector: { :drop => name },
-                              db_name: database.name,
-                              write_concern: write_concern,
-                              session: session,
-                              }).execute(next_primary(nil, session), context: Operation::Context.new(client: client, session: session))
-      end
-    rescue Error::OperationFailure => ex
-      # NamespaceNotFound
-      if ex.code == 26 || ex.code.nil? && ex.message =~ /ns not found/
-        false
-      else
-        raise
       end
     end
 
@@ -334,26 +449,27 @@ module Mongo
     # @param [ Hash ] filter The filter to use in the find.
     # @param [ Hash ] options The options for the find.
     #
-    # @option options [ true, false ] :allow_disk_use When set to true, the
+    # @option options [ true | false ] :allow_disk_use When set to true, the
     #   server can write temporary data to disk while executing the find
     #   operation. This option is only available on MongoDB server versions
     #   4.4 and newer.
-    # @option options [ true, false ] :allow_partial_results Allows the query to get partial
+    # @option options [ true | false ] :allow_partial_results Allows the query to get partial
     #   results if some shards are down.
     # @option options [ Integer ] :batch_size The number of documents returned in each batch
     #   of results from MongoDB.
     # @option options [ Hash ] :collation The collation to use.
-    # @option options [ String ] :comment Associate a comment with the query.
+    # @option options [ Object ] :comment A user-provided comment to attach to
+    #   this command.
     # @option options [ :tailable, :tailable_await ] :cursor_type The type of cursor to use.
     # @option options [ Integer ] :limit The max number of docs to return from the query.
     # @option options [ Integer ] :max_time_ms
     #   The maximum amount of time to allow the query to run, in milliseconds.
     # @option options [ Hash ] :modifiers A document containing meta-operators modifying the
     #   output or behavior of a query.
-    # @option options [ true, false ] :no_cursor_timeout The server normally times out idle
+    # @option options [ true | false ] :no_cursor_timeout The server normally times out idle
     #   cursors after an inactivity period (10 minutes) to prevent excess memory use.
     #   Set this option to prevent that.
-    # @option options [ true, false ] :oplog_replay For internal replication
+    # @option options [ true | false ] :oplog_replay For internal replication
     #   use only, applications should not set this option.
     # @option options [ Hash ] :projection The fields to include or exclude from each doc
     #   in the result set.
@@ -361,6 +477,8 @@ module Mongo
     # @option options [ Integer ] :skip The number of docs to skip before returning results.
     # @option options [ Hash ] :sort The key and direction pairs by which the result set
     #   will be sorted.
+    # @option options [ Hash ] :let Mapping of variables to use in the command.
+    #   See the server documentation for details.
     #
     # @return [ CollectionView ] The collection view.
     #
@@ -377,18 +495,21 @@ module Mongo
     # @param [ Array<Hash> ] pipeline The aggregation pipeline.
     # @param [ Hash ] options The aggregation options.
     #
-    # @option options [ true, false ] :allow_disk_use Set to true if disk
+    # @option options [ true | false ] :allow_disk_use Set to true if disk
     #   usage is allowed during the aggregation.
     # @option options [ Integer ] :batch_size The number of documents to return
     #   per batch.
-    # @option options [ true, false ] :bypass_document_validation Whether or
+    # @option options [ true | false ] :bypass_document_validation Whether or
     #   not to skip document level validation.
     # @option options [ Hash ] :collation The collation to use.
-    # @option options [ String ] :comment Associate a comment with the aggregation.
+    # @option options [ Object ] :comment A user-provided
+    #   comment to attach to this command.
     # @option options [ String ] :hint The index to use for the aggregation.
+    # @option options [ Hash ] :let Mapping of variables to use in the pipeline.
+    #   See the server documentation for details.
     # @option options [ Integer ] :max_time_ms The maximum amount of time in
     #   milliseconds to allow the aggregation to run.
-    # @option options [ true, false ] :use_cursor Indicates whether the command
+    # @option options [ true | false ] :use_cursor Indicates whether the command
     #   will request that the server provide results using a cursor. Note that
     #   as of server version 3.6, aggregations always provide results using a
     #   cursor and this option is therefore not valid.
@@ -412,11 +533,35 @@ module Mongo
     # @param [ Array<Hash> ] pipeline Optional additional filter operators.
     # @param [ Hash ] options The change stream options.
     #
-    # @option options [ String ] :full_document Allowed values: ‘default’,
-    #   ‘updateLookup’. Defaults to ‘default’. When set to ‘updateLookup’,
-    #   the change notification for partial updates will include both a delta
-    #   describing the changes to the document, as well as a copy of the entire
-    #   document that was changed from some time after the change occurred.
+    # @option options [ String ] :full_document Allowed values: nil, 'default',
+    #   'updateLookup', 'whenAvailable', 'required'.
+    #
+    #   The default is to not send a value (i.e. nil), which is equivalent to
+    #   'default'. By default, the change notification for partial updates will
+    #   include a delta describing the changes to the document.
+    #
+    #   When set to 'updateLookup', the change notification for partial updates
+    #   will include both a delta describing the changes to the document as well
+    #   as a copy of the entire document that was changed from some time after
+    #   the change occurred.
+    #
+    #   When set to 'whenAvailable', configures the change stream to return the
+    #   post-image of the modified document for replace and update change events
+    #   if the post-image for this event is available.
+    #
+    #   When set to 'required', the same behavior as 'whenAvailable' except that
+    #   an error is raised if the post-image is not available.
+    # @option options [ String ] :full_document_before_change Allowed values: nil,
+    #   'whenAvailable', 'required', 'off'.
+    #
+    #   The default is to not send a value (i.e. nil), which is equivalent to 'off'.
+    #
+    #   When set to 'whenAvailable', configures the change stream to return the
+    #   pre-image of the modified document for replace, update, and delete change
+    #   events if it is available.
+    #
+    #   When set to 'required', the same behavior as 'whenAvailable' except that
+    #   an error is raised if the pre-image is not available.
     # @option options [ BSON::Document, Hash ] :resume_after Specifies the
     #   logical starting point for the new change stream.
     # @option options [ Integer ] :max_await_time_ms The maximum amount of time
@@ -429,6 +574,13 @@ module Mongo
     #   changes that occurred at or after the specified timestamp. Any command run
     #   against the server will return a cluster time that can be used here.
     #   Only recognized by server versions 4.0+.
+    # @option options [ Object ] :comment A user-provided
+    #   comment to attach to this command.
+    # @option options [ Boolean ] :show_expanded_events Enables the server to
+    #   send the 'expanded' list of change stream events. The list of additional
+    #   events included with this flag set are: createIndexes, dropIndexes,
+    #   modify, create, shardCollection, reshardCollection,
+    #   refineCollectionShardKey.
     #
     # @note A change stream only allows 'majority' read concern.
     # @note This helper method is preferable to running a raw aggregation with
@@ -438,7 +590,9 @@ module Mongo
     #
     # @since 2.5.0
     def watch(pipeline = [], options = {})
-      View::ChangeStream.new(View.new(self, {}, options), pipeline, nil, options)
+      view_options = options.dup
+      view_options[:await_data] = true if options[:max_await_time_ms]
+      View::ChangeStream.new(View.new(self, {}, view_options), pipeline, nil, options)
     end
 
     # Gets an estimated number of matching documents in the collection.
@@ -456,6 +610,8 @@ module Mongo
     # @option options [ Hash ] :read The read preference options.
     # @option options [ Hash ] :collation The collation to use.
     # @option options [ Session ] :session The session to use.
+    # @option options [ Object ] :comment A user-provided
+    #   comment to attach to this command.
     #
     # @return [ Integer ] The document count.
     #
@@ -489,6 +645,9 @@ module Mongo
     #   command to run.
     # @option options :read [ Hash ] The read preference options.
     # @option options :collation [ Hash ] The collation to use.
+    # @option options [ Session ] :session The session to use.
+    # @option options [ Object ] :comment A user-provided
+    #   comment to attach to this command.
     #
     # @return [ Integer ] The document count.
     #
@@ -505,9 +664,11 @@ module Mongo
     #
     # @param [ Hash ] options Options for the operation.
     #
-    # @option opts :max_time_ms [ Integer ] The maximum amount of time to allow
+    # @option options :max_time_ms [ Integer ] The maximum amount of time to allow
     #   the command to run for on the server.
-    # @option opts [ Hash ] :read The read preference options.
+    # @option options [ Hash ] :read The read preference options.
+    # @option options [ Object ] :comment A user-provided
+    #   comment to attach to this command.
     #
     # @return [ Integer ] The document count.
     #
@@ -574,7 +735,13 @@ module Mongo
     # @param [ Hash ] document The document to insert.
     # @param [ Hash ] opts The insert options.
     #
+    # @option opts [ true | false ] :bypass_document_validation Whether or
+    #   not to skip document level validation.
+    # @option opts [ Object ] :comment A user-provided comment to attach to
+    #   this command.
     # @option opts [ Session ] :session The session to use for the operation.
+    # @option opts [ Hash ] :write_concern The write concern options.
+    #   Can be :w => Integer, :fsync => Boolean, :j => Boolean.
     #
     # @return [ Result ] The database response wrapper.
     #
@@ -593,7 +760,8 @@ module Mongo
           raise ArgumentError, "Document to be inserted cannot be nil"
         end
 
-        write_with_retry(session, write_concern) do |server, txn_num|
+        context = Operation::Context.new(client: client, session: session)
+        write_with_retry(write_concern, context: context) do |connection, txn_num, context|
           Operation::Insert.new(
             :documents => [ document ],
             :db_name => database.name,
@@ -604,7 +772,8 @@ module Mongo
             :id_generator => client.options[:id_generator],
             :session => session,
             :txn_num => txn_num,
-          ).execute(server, context: Operation::Context.new(client: client, session: session))
+            :comment => opts[:comment]
+          ).execute_with_connection(connection, context: context)
         end
       end
     end
@@ -614,12 +783,18 @@ module Mongo
     # @example Insert documents into the collection.
     #   collection.insert_many([{ name: 'test' }])
     #
-    # @param [ Array<Hash> ] documents The documents to insert.
+    # @param [ Enumerable<Hash> ] documents The documents to insert.
     # @param [ Hash ] options The insert options.
     #
+    # @option options [ true | false ] :bypass_document_validation Whether or
+    #   not to skip document level validation.
+    # @option options [ Object ] :comment A user-provided comment to attach to
+    #   this command.
     # @option options [ true | false ] :ordered Whether the operations
     #   should be executed in order.
     # @option options [ Session ] :session The session to use for the operation.
+    # @option options [ Hash ] :write_concern The write concern options.
+    #   Can be :w => Integer, :fsync => Boolean, :j => Boolean.
     #
     # @return [ Result ] The database response wrapper.
     #
@@ -636,16 +811,18 @@ module Mongo
     # @example Execute a bulk write.
     #   collection.bulk_write(operations, options)
     #
-    # @param [ Array<Hash> ] requests The bulk write requests.
+    # @param [ Enumerable<Hash> ] requests The bulk write requests.
     # @param [ Hash ] options The options.
     #
-    # @option options [ true, false ] :ordered Whether the operations
+    # @option options [ true | false ] :ordered Whether the operations
     #   should be executed in order.
     # @option options [ Hash ] :write_concern The write concern options.
     #   Can be :w => Integer, :fsync => Boolean, :j => Boolean.
-    # @option options [ true, false ] :bypass_document_validation Whether or
+    # @option options [ true | false ] :bypass_document_validation Whether or
     #   not to skip document level validation.
     # @option options [ Session ] :session The session to use for the set of operations.
+    # @option options [ Hash ] :let Mapping of variables to use in the command.
+    #   See the server documentation for details.
     #
     # @return [ BulkWrite::Result ] The result of the operation.
     #
@@ -666,6 +843,8 @@ module Mongo
     # @option options [ Session ] :session The session to use.
     # @option options [ Hash | String ] :hint The index to use for this operation.
     #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
+    # @option options [ Hash ] :let Mapping of variables to use in the command.
+    #   See the server documentation for details.
     #
     # @return [ Result ] The response from the database.
     #
@@ -686,6 +865,8 @@ module Mongo
     # @option options [ Session ] :session The session to use.
     # @option options [ Hash | String ] :hint The index to use for this operation.
     #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
+    # @option options [ Hash ] :let Mapping of variables to use in the command.
+    #   See the server documentation for details.
     #
     # @return [ Result ] The response from the database.
     #
@@ -726,14 +907,16 @@ module Mongo
     # @param [ Hash ] replacement The replacement document..
     # @param [ Hash ] options The options.
     #
-    # @option options [ true, false ] :upsert Whether to upsert if the
+    # @option options [ true | false ] :upsert Whether to upsert if the
     #   document doesn't exist.
-    # @option options [ true, false ] :bypass_document_validation Whether or
+    # @option options [ true | false ] :bypass_document_validation Whether or
     #   not to skip document level validation.
     # @option options [ Hash ] :collation The collation to use.
     # @option options [ Session ] :session The session to use.
     # @option options [ Hash | String ] :hint The index to use for this operation.
     #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
+    # @option options [ Hash ] :let Mapping of variables to use in the command.
+    #   See the server documentation for details.
     #
     # @return [ Result ] The response from the database.
     #
@@ -751,9 +934,9 @@ module Mongo
     # @param [ Hash | Array<Hash> ] update The update document or pipeline.
     # @param [ Hash ] options The options.
     #
-    # @option options [ true, false ] :upsert Whether to upsert if the
+    # @option options [ true | false ] :upsert Whether to upsert if the
     #   document doesn't exist.
-    # @option options [ true, false ] :bypass_document_validation Whether or
+    # @option options [ true | false ] :bypass_document_validation Whether or
     #   not to skip document level validation.
     # @option options [ Hash ] :collation The collation to use.
     # @option options [ Array ] :array_filters A set of filters specifying to which array elements
@@ -761,6 +944,8 @@ module Mongo
     # @option options [ Session ] :session The session to use.
     # @option options [ Hash | String ] :hint The index to use for this operation.
     #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
+    # @option options [ Hash ] :let Mapping of variables to use in the command.
+    #   See the server documentation for details.
     #
     # @return [ Result ] The response from the database.
     #
@@ -778,9 +963,9 @@ module Mongo
     # @param [ Hash | Array<Hash> ] update The update document or pipeline.
     # @param [ Hash ] options The options.
     #
-    # @option options [ true, false ] :upsert Whether to upsert if the
+    # @option options [ true | false ] :upsert Whether to upsert if the
     #   document doesn't exist.
-    # @option options [ true, false ] :bypass_document_validation Whether or
+    # @option options [ true | false ] :bypass_document_validation Whether or
     #   not to skip document level validation.
     # @option options [ Hash ] :collation The collation to use.
     # @option options [ Array ] :array_filters A set of filters specifying to which array elements
@@ -788,6 +973,8 @@ module Mongo
     # @option options [ Session ] :session The session to use.
     # @option options [ Hash | String ] :hint The index to use for this operation.
     #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
+    # @option options [ Hash ] :let Mapping of variables to use in the command.
+    #   See the server documentation for details.
     #
     # @return [ Result ] The response from the database.
     #
@@ -816,6 +1003,8 @@ module Mongo
     # @option options [ Session ] :session The session to use.
     # @option options [ Hash | String ] :hint The index to use for this operation.
     #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
+    # @option options [ Hash ] :let Mapping of variables to use in the command.
+    #   See the server documentation for details.
     #
     # @return [ BSON::Document, nil ] The document, if found.
     #
@@ -843,8 +1032,8 @@ module Mongo
     # @option options [ Hash ] :sort The key and direction pairs by which the result set
     #   will be sorted.
     # @option options [ Symbol ] :return_document Either :before or :after.
-    # @option options [ true, false ] :upsert Whether to upsert if the document doesn't exist.
-    # @option options [ true, false ] :bypass_document_validation Whether or
+    # @option options [ true | false ] :upsert Whether to upsert if the document doesn't exist.
+    # @option options [ true | false ] :bypass_document_validation Whether or
     #   not to skip document level validation.
     # @option options [ Hash ] :write_concern The write concern options.
     #   Defaults to the collection's write concern.
@@ -854,6 +1043,8 @@ module Mongo
     # @option options [ Session ] :session The session to use.
     # @option options [ Hash | String ] :hint The index to use for this operation.
     #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
+    # @option options [ Hash ] :let Mapping of variables to use in the command.
+    #   See the server documentation for details.
     #
     # @return [ BSON::Document ] The document.
     #
@@ -881,8 +1072,8 @@ module Mongo
     # @option options [ Hash ] :sort The key and direction pairs by which the result set
     #   will be sorted.
     # @option options [ Symbol ] :return_document Either :before or :after.
-    # @option options [ true, false ] :upsert Whether to upsert if the document doesn't exist.
-    # @option options [ true, false ] :bypass_document_validation Whether or
+    # @option options [ true | false ] :upsert Whether to upsert if the document doesn't exist.
+    # @option options [ true | false ] :bypass_document_validation Whether or
     #   not to skip document level validation.
     # @option options [ Hash ] :write_concern The write concern options.
     #   Defaults to the collection's write concern.
@@ -890,6 +1081,8 @@ module Mongo
     # @option options [ Session ] :session The session to use.
     # @option options [ Hash | String ] :hint The index to use for this operation.
     #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
+    # @option options [ Hash ] :let Mapping of variables to use in the command.
+    #   See the server documentation for details.
     #
     # @return [ BSON::Document ] The document.
     #

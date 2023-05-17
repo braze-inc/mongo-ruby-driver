@@ -168,6 +168,24 @@ module Utils
       }
     end
 
+    if opts['kmsProviders']['azure']
+      # The tests require that Azure credentials be filled in by the driver.
+      auto_encrypt_opts[:kms_providers][:azure] = {
+        tenant_id: SpecConfig.instance.fle_azure_tenant_id,
+        client_id: SpecConfig.instance.fle_azure_client_id,
+        client_secret: SpecConfig.instance.fle_azure_client_secret,
+      }
+    end
+
+    if opts['kmsProviders']['gcp']
+      # The tests require that GCP credentials be filled in by the driver.
+      auto_encrypt_opts[:kms_providers][:gcp] = {
+        email: SpecConfig.instance.fle_gcp_email,
+        private_key: SpecConfig.instance.fle_gcp_private_key,
+      }
+    end
+
+
     if opts['kmsProviders']['local']
       auto_encrypt_opts[:kms_providers][:local] = {
         key: BSON::ExtJSON.parse_obj(opts['kmsProviders']['local']['key']).data
@@ -177,11 +195,15 @@ module Utils
     if opts['keyVaultNamespace']
       auto_encrypt_opts[:key_vault_namespace] = opts['keyVaultNamespace']
     else
-      auto_encrypt_opts[:key_vault_namespace] = 'admin.datakeys'
+      auto_encrypt_opts[:key_vault_namespace] = 'keyvault.datakeys'
     end
 
     if opts['schemaMap']
       auto_encrypt_opts[:schema_map] = BSON::ExtJSON.parse_obj(opts['schemaMap'])
+    end
+
+    if opts['encryptedFieldsMap']
+      auto_encrypt_opts[:encrypted_fields_map] = BSON::ExtJSON.parse_obj(opts['encryptedFieldsMap'])
     end
 
     auto_encrypt_opts
@@ -386,14 +408,13 @@ module Utils
 
       actual.is_a?(expected_class) || actual.key?(expected_key)
     elsif expected.is_a?(Hash) && actual.is_a?(Hash)
-      same_keys = (expected.keys - actual.keys).empty? &&
-        (actual.keys - expected.keys).empty?
+      has_all_keys = (expected.keys - actual.keys).empty?
 
       same_values = expected.keys.all? do |key|
         match_with_type?(expected[key], actual[key])
       end
 
-      same_keys && same_values
+      has_all_keys && same_values
     elsif expected.is_a?(Array) && actual.is_a?(Array)
       same_length = expected.length == actual.length
 
@@ -593,6 +614,37 @@ module Utils
         yield direct_client
         direct_client.close
       end
+    end
+  end
+
+  module_function def load_spec_yaml_file(path)
+    permitted_classes = [
+                          BigDecimal,
+                          Date,
+                          Time,
+                          Range,
+                          Regexp,
+                          Symbol,
+                          BSON::Binary,
+                          BSON::Code,
+                          BSON::CodeWithScope,
+                          BSON::DbPointer,
+                          BSON::Decimal128,
+                          BSON::Int32,
+                          BSON::Int64,
+                          BSON::MaxKey,
+                          BSON::MinKey,
+                          BSON::ObjectId,
+                          BSON::Regexp::Raw,
+                          BSON::Symbol::Raw,
+                          BSON::Timestamp,
+                          BSON::Undefined,
+                        ]
+    if RUBY_VERSION < '2.6'
+      YAML.safe_load(File.read(path), permitted_classes, [], true)
+    else
+      # Here we have Ruby 2.6+ that supports the new syntax of `safe_load``.
+      YAML.safe_load(File.read(path), permitted_classes: permitted_classes, aliases: true)
     end
   end
 end

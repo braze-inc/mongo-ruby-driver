@@ -39,14 +39,17 @@ module Mongo
         end
 
         def selector(connection)
-          { insert: coll_name,
+          {
+            insert: coll_name,
             Protocol::Msg::DATABASE_IDENTIFIER => db_name,
-            ordered: ordered? }
+            ordered: ordered?,
+            comment: spec[:comment],
+          }.compact
         end
 
         def message(connection)
           section = Protocol::Msg::Section1.new(IDENTIFIER, send(IDENTIFIER))
-          Protocol::Msg.new(flags, { validating_keys: true }, command(connection), section)
+          Protocol::Msg.new(flags, {}, command(connection), section)
         end
       end
     end

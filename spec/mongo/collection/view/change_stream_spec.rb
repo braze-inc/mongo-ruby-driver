@@ -56,7 +56,7 @@ describe Mongo::Collection::View::ChangeStream do
 
   let(:command_spec) do
     change_stream.send(:instance_variable_set, '@resuming', false)
-    change_stream.send(:aggregate_spec, double('session'))
+    change_stream.send(:aggregate_spec, double('session'), nil)
   end
 
   let(:cursor) do
@@ -178,7 +178,7 @@ describe Mongo::Collection::View::ChangeStream do
 
       it 'raises the error from the server' do
         expect(error).to be_a(Mongo::Error::OperationFailure)
-        expect(error.message).to include('$changeStream is only valid as the first stage in a pipeline')
+        expect(error.message).to include('is only valid as the first stage in a pipeline')
       end
     end
 

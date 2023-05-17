@@ -37,7 +37,9 @@ module Mongo
           {
             update: coll_name,
             ordered: ordered?,
-          }
+            let: spec[:let],
+            comment: spec[:comment]
+          }.compact
         end
 
         def message(connection)

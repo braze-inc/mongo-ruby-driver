@@ -5,6 +5,7 @@ require 'lite_spec_helper'
 
 require 'support/using_hash'
 require 'runners/connection_string'
+require 'mrss/lite_constraints'
 
 SEED_LIST_DISCOVERY_TESTS = Dir.glob("#{CURRENT_PATH}/spec_tests/data/seed_list_discovery/**/*.yml").sort
 
@@ -15,7 +16,7 @@ describe 'DNS Seedlist Discovery' do
 
   SEED_LIST_DISCOVERY_TESTS.each do |test_path|
 
-    spec = YAML.load(File.read(test_path))
+    spec = ::Utils.load_spec_yaml_file(test_path)
 
     test = Mongo::ConnectionString::Test.new(spec)
 
@@ -23,6 +24,7 @@ describe 'DNS Seedlist Discovery' do
 
       if test.raise_error?
         context 'the uri is invalid' do
+          retry_test
 
           let(:valid_errors) do
             [
@@ -43,6 +45,7 @@ describe 'DNS Seedlist Discovery' do
             ex
           end
 
+          # In Evergreen sometimes this test fails intermittently.
           it 'raises an error' do
             expect(valid_errors).to include(error.class)
           end
@@ -51,7 +54,8 @@ describe 'DNS Seedlist Discovery' do
       else
 
         context 'the uri is valid' do
-
+          retry_test
+          # In Evergreen sometimes this test fails intermittently.
           it 'does not raise an exception' do
             expect(test.uri).to be_a(Mongo::URI::SRVProtocol)
           end
@@ -65,6 +69,11 @@ describe 'DNS Seedlist Discovery' do
             # list and not the expanded hosts.
             it 'creates a client with the correct seeds' do
               expect(test.client).to have_hosts(test, test.seeds)
+            end
+          elsif test.num_seeds
+            it 'has the right number of seeds' do
+              num_servers = test.client.cluster.servers_list.length
+              expect(num_servers).to eq(test.num_seeds)
             end
           else
             it 'creates a client with the correct hosts' do

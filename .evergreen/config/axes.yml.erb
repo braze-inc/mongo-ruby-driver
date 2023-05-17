@@ -17,6 +17,14 @@ axes:
         display_name: "latest"
         variables:
           MONGODB_VERSION: "latest"
+      - id: "6.0"
+        display_name: "6.0"
+        variables:
+          MONGODB_VERSION: "6.0"
+      - id: "5.3"
+        display_name: "5.3"
+        variables:
+          MONGODB_VERSION: "5.3"
       - id: "5.0"
         display_name: "5.0"
         variables:
@@ -37,22 +45,6 @@ axes:
         display_name: "3.6"
         variables:
           MONGODB_VERSION: "3.6"
-      - id: "3.4"
-        display_name: "3.4"
-        variables:
-          MONGODB_VERSION: "3.4"
-      - id: "3.2"
-        display_name: "3.2"
-        variables:
-          MONGODB_VERSION: "3.2"
-      - id: "3.0"
-        display_name: "3.0"
-        variables:
-          MONGODB_VERSION: "3.0"
-      - id: "2.6"
-        display_name: "2.6"
-        variables:
-          MONGODB_VERSION: "2.6"
 
   - id: fcv
     display_name: FCV
@@ -137,6 +129,10 @@ axes:
   - id: "ruby"
     display_name: Ruby Version
     values:
+      - id: "ruby-3.1"
+        display_name: ruby-3.1
+        variables:
+          RVM_RUBY: "ruby-3.1"
       - id: "ruby-3.0"
         display_name: ruby-3.0
         variables:
@@ -153,10 +149,6 @@ axes:
         display_name: ruby-2.5
         variables:
           RVM_RUBY: "ruby-2.5"
-      - id: "ruby-2.4"
-        display_name: ruby-2.4
-        variables:
-          RVM_RUBY: "ruby-2.4"
       - id: "ruby-head"
         display_name: ruby-head
         variables:
@@ -165,16 +157,26 @@ axes:
         display_name: jruby-9.2
         variables:
           RVM_RUBY: "jruby-9.2"
+      - id: "jruby-9.3"
+        display_name: jruby-9.3
+        variables:
+          RVM_RUBY: "jruby-9.3"
 
   - id: "os"
     display_name: OS
     values:
+      - id: ubuntu2004
+        display_name: "Ubuntu 20.04"
+        run_on: ubuntu2004-small
       - id: ubuntu1804
         display_name: "Ubuntu 18.04"
         run_on: ubuntu1804-small
       - id: ubuntu1604
         display_name: "Ubuntu 16.04"
         run_on: ubuntu1604-small
+      - id: rhel80
+        display_name: "RHEL 8"
+        run_on: rhel80-small
       - id: rhel70
         display_name: "RHEL 7"
         run_on: rhel70-small
@@ -185,7 +187,7 @@ axes:
   - id: docker-distro
     display_name: Docker Distro
     values:
-      <% %w(debian92 debian10).each do |distro| %>
+      <% %w(debian92 debian10 ubuntu1804).each do |distro| %>
         - id: <%= distro %>
           display_name: <%= distro %>
           variables:
@@ -271,6 +273,10 @@ axes:
         display_name: master
         variables:
           BSON: master
+      - id: 4-stable
+        display_name: 4-stable
+        variables:
+          BSON: 4-stable
       - id: min
         display_name: min
         variables:
@@ -288,10 +294,14 @@ axes:
   - id: "fle"
     display_name: FLE
     values:
-      - id: "fle"
-        display_name: FLE
+      - id: "helper"
+        display_name: via LMC helper
         variables:
-          FLE: true
+          FLE: helper
+      - id: "path"
+        display_name: via LMC path
+        variables:
+          FLE: path
 
   - id: ocsp-algorithm
     display_name: OCSP Algorithm

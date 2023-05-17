@@ -35,12 +35,23 @@ module Mongo
 
     # Initialize a Session.
     #
+    # A session can be explicit or implicit. Lifetime of explicit sessions is
+    # managed by the application - applications explicitry create such sessions
+    # and explicitly end them. Implicit sessions are created automatically by
+    # the driver when sending operations to servers that support sessions
+    # (3.6+), and their lifetime is managed by the driver.
+    #
+    # When an implicit session is created, it cannot have a server session
+    # associated with it. The server session will be checked out of the
+    # session pool when an operation using this session is actually executed.
+    # When an explicit session is created, it must reference a server session
+    # that is already allocated.
+    #
     # @note Applications should use Client#start_session to begin a session.
+    #   This constructor is for internal driver use only.
     #
-    # @example
-    #   Session.new(server_session, client, options)
-    #
-    # @param [ ServerSession ] server_session The server session this session is associated with.
+    # @param [ ServerSession | nil ] server_session The server session this session is associated with.
+    #   If the :implicit option is true, this must be nil.
     # @param [ Client ] client The client through which this session is created.
     # @param [ Hash ] options The options for this session.
     #
@@ -50,21 +61,39 @@ module Mongo
     #   to start_transaction by default, can contain any of the options that
     #   start_transaction accepts.
     # @option options [ true|false ] :implicit For internal driver use only -
-    #   specifies whether the session is implicit.
+    #   specifies whether the session is implicit. If this is true, the server_session
+    #   will be nil. This is done so that the server session is only checked
+    #   out after the connection is checked out.
     # @option options [ Hash ] :read_preference The read preference options hash,
     #   with the following optional keys:
     #   - *:mode* -- the read preference as a string or symbol; valid values are
     #     *:primary*, *:primary_preferred*, *:secondary*, *:secondary_preferred*
     #     and *:nearest*.
+    # @option options [ true | false ] :snapshot Set up the session for
+    #   snapshot reads.
     #
     # @since 2.5.0
     # @api private
     def initialize(server_session, client, options = {})
+      if options[:causal_consistency] && options[:snapshot]
+        raise ArgumentError, ':causal_consistency and :snapshot options cannot be both set on a session'
+      end
+
+      if options[:implicit]
+        unless server_session.nil?
+          raise ArgumentError, 'Implicit session cannot reference server session during construction'
+        end
+      else
+        if server_session.nil?
+          raise ArgumentError, 'Explicit session must reference server session during construction'
+        end
+      end
+
       @server_session = server_session
       options = options.dup
 
       @client = client.use(:admin)
-      @options = options.freeze
+      @options = options.dup.freeze
       @cluster_time = nil
       @state = NO_TRANSACTION_STATE
     end
@@ -81,6 +110,12 @@ module Mongo
 
     def cluster
       @client.cluster
+    end
+
+    # @return [ true | false ] Whether the session is configured for snapshot
+    #   reads.
+    def snapshot?
+      !!options[:snapshot]
     end
 
     # @return [ BSON::Timestamp ] The latest seen operation time for this session.
@@ -148,11 +183,11 @@ module Mongo
     # @return [ true, false ] If writes will be retried.
     #
     # @note Retryable writes are only available on server versions at least 3.6
-    #   and with sharded clusters or replica sets.
+    #   and with sharded clusters, replica sets, or load-balanced topologies.
     #
     # @since 2.5.0
     def retry_writes?
-      !!client.options[:retry_writes] && (cluster.replica_set? || cluster.sharded?)
+      !!client.options[:retry_writes] && (cluster.replica_set? || cluster.sharded? || cluster.load_balanced?)
     end
 
     # Get the read preference the session will use in the currently
@@ -182,21 +217,31 @@ module Mongo
     #
     # @since 2.5.0
     def ended?
-      @server_session.nil?
+      !!@ended
     end
 
-    # Get the server session id of this session, if the session was not ended.
-    # If the session was ended, returns nil.
-    #
-    # @example Get the session id.
-    #   session.session_id
+    # Get the server session id of this session, if the session has not been
+    # ended. If the session had been ended, raises Error::SessionEnded.
     #
     # @return [ BSON::Document ] The server session id.
+    #
+    # @raise [ Error::SessionEnded ] If the session had been ended.
     #
     # @since 2.5.0
     def session_id
       if ended?
         raise Error::SessionEnded
+      end
+
+      # An explicit session will always have a session_id, because during
+      # construction a server session must be provided. An implicit session
+      # will not have a session_id until materialized, thus calls to
+      # session_id might fail. An application should not have an opportunity
+      # to experience this failure because an implicit session shouldn't be
+      # accessible to applications due to its lifetime being constrained to
+      # operation execution, which is done entirely by the driver.
+      unless materialized?
+        raise Error::SessionNotMaterialized
       end
 
       @server_session.session_id
@@ -208,11 +253,11 @@ module Mongo
     # @api private
     attr_reader :pinned_server
 
-    # @return [ Object | nil ] The service id that this session is pinned to,
+    # @return [ Integer | nil ] The connection global id that this session is pinned to,
     #   if any.
     #
     # @api private
-    attr_reader :pinned_service_id
+    attr_reader :pinned_connection_global_id
 
     # @return [ BSON::Document | nil ] Recovery token for the sharded
     #   transaction being executed on this session, if any.
@@ -313,10 +358,13 @@ module Mongo
           rescue Mongo::Error, Error::AuthError
           end
         end
-        @client.cluster.session_pool.checkin(@server_session)
+        if @server_session
+          @client.cluster.session_pool.checkin(@server_session)
+        end
       end
     ensure
       @server_session = nil
+      @ended = true
     end
 
     # Executes the provided block in a transaction, retrying as necessary.
@@ -474,7 +522,7 @@ module Mongo
     #
     # @option options [ Integer ] :max_commit_time_ms The maximum amount of
     #   time to allow a single commitTransaction command to run, in milliseconds.
-    # @option options [ Hash ] read_concern The read concern options hash,
+    # @option options [ Hash ] :read_concern The read concern options hash,
     #   with the following optional keys:
     #   - *:level* -- the read preference level as a symbol; valid values
     #      are *:local*, *:majority*, and *:snapshot*
@@ -504,6 +552,10 @@ module Mongo
           )
         end
 =end
+      end
+
+      if snapshot?
+        raise Mongo::Error::SnapshotSessionTransactionProhibited
       end
 
       check_if_ended!
@@ -575,8 +627,12 @@ module Mongo
           if write_concern && !write_concern.is_a?(WriteConcern::Base)
             write_concern = WriteConcern.get(write_concern)
           end
-          write_with_retry(self, write_concern, true) do |server, txn_num, is_retry|
-            if is_retry
+
+          context = Operation::Context.new(client: @client, session: self)
+          write_with_retry(write_concern, ending_transaction: true,
+            context: context,
+          ) do |connection, txn_num, context|
+            if context.retry?
               if write_concern
                 wco = write_concern.options.merge(w: :majority)
                 wco[:wtimeout] ||= 10000
@@ -592,7 +648,7 @@ module Mongo
               txn_num: txn_num,
               write_concern: write_concern,
             }
-            Operation::Command.new(spec).execute(server, context: Operation::Context.new(client: @client, session: self))
+            Operation::Command.new(spec).execute_with_connection(connection, context: context)
           end
         end
       ensure
@@ -633,14 +689,17 @@ module Mongo
       begin
         unless starting_transaction?
           @aborting_transaction = true
-          write_with_retry(self, txn_options[:write_concern], true) do |server, txn_num|
+          context = Operation::Context.new(client: @client, session: self)
+          write_with_retry(txn_options[:write_concern],
+            ending_transaction: true, context: context,
+          ) do |connection, txn_num, context|
             begin
               Operation::Command.new(
                 selector: { abortTransaction: 1 },
                 db_name: 'admin',
                 session: self,
                 txn_num: txn_num
-              ).execute(server, context: Operation::Context.new(client: @client, session: self))
+              ).execute_with_connection(connection, context: context)
             ensure
               unpin
             end
@@ -714,27 +773,32 @@ module Mongo
       @pinned_server = server
     end
 
-    # Pins this session to the specified service.
+    # Pins this session to the specified connection.
     #
-    # @param [ Object ] service_id The service id to pin this session to.
+    # @param [ Integer ] connection_global_id The global id of connection to pin
+    # this session to.
     #
     # @api private
-    def pin_to_service(service_id)
-      if service_id.nil?
-        raise ArgumentError, 'Cannot pin to a nil service id'
+    def pin_to_connection(connection_global_id)
+      if connection_global_id.nil?
+        raise ArgumentError, 'Cannot pin to a nil connection id'
       end
-      @pinned_service_id = service_id
+      @pinned_connection_global_id = connection_global_id
     end
 
-    # Unpins this session from the pinned server, if the session was pinned.
+    # Unpins this session from the pinned server or connection,
+    # if the session was pinned.
+    #
+    # @param [ Connection | nil ] connection Connection to unpin from.
     #
     # @api private
-    def unpin
+    def unpin(connection = nil)
       @pinned_server = nil
-      @pinned_service_id = nil
+      @pinned_connection_global_id = nil
+      connection.unpin unless connection.nil?
     end
 
-    # Unpins this session from the pinned server, if the session was pinned
+    # Unpins this session from the pinned server or connection, if the session was pinned
     # and the specified exception instance and the session's transaction state
     # require it to be unpinned.
     #
@@ -742,19 +806,20 @@ module Mongo
     # (both client- and server-side generated ones).
     #
     # @param [ Error ] error The exception instance to process.
+    # @param [ Connection | nil ] connection Connection to unpin from.
     #
     # @api private
-    def unpin_maybe(error)
+    def unpin_maybe(error, connection = nil)
       if !within_states?(Session::NO_TRANSACTION_STATE) &&
         error.label?('TransientTransactionError')
       then
-        unpin
+        unpin(connection)
       end
 
       if committing_transaction? &&
         error.label?('UnknownTransactionCommitResult')
       then
-        unpin
+        unpin(connection)
       end
     end
 
@@ -991,6 +1056,33 @@ module Mongo
       end
     end
 
+    # If not already set, populate a session objects's server_session by
+    # checking out a session from the session pool.
+    #
+    # @return [ Session ] Self.
+    #
+    # @api private
+    def materialize_if_needed
+      if ended?
+        raise Error::SessionEnded
+      end
+
+      return unless implicit? && !@server_session
+
+      @server_session = cluster.session_pool.checkout
+
+      self
+    end
+
+    # @api private
+    def materialized?
+      if ended?
+        raise Error::SessionEnded
+      end
+
+      !@server_session.nil?
+    end
+
     # Increment and return the next transaction number.
     #
     # @example Get the next transaction number.
@@ -1023,6 +1115,9 @@ module Mongo
 
       @server_session.txn_num
     end
+
+    # @api private
+    attr_accessor :snapshot_timestamp
 
     private
 

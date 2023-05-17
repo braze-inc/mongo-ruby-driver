@@ -112,7 +112,12 @@ module Mongo
         reply = connection.dispatch([msg], context)
         reply_document = reply.documents.first
         validate_reply!(connection, conversation, reply_document)
-        result = Operation::Result.new(reply, connection.description)
+        connection_global_id = if connection.respond_to?(:global_id)
+          connection.global_id
+        else
+          nil
+        end
+        result = Operation::Result.new(reply, connection.description, connection_global_id)
         connection.update_cluster_time(result)
         reply_document
       end
@@ -126,10 +131,12 @@ module Mongo
             code_name: doc[:codeName],
             message: doc[:errmsg],
           )
+
           raise Unauthorized.new(user,
             used_mechanism: self.class.const_get(:MECHANISM),
             message: message,
             server: connection.server,
+            code: doc[:code]
           )
         end
       end

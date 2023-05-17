@@ -5,8 +5,6 @@ runOn:
     -
         minServerVersion: "4.1.8"
         topology: ["sharded"]
-        # https://jira.mongodb.org/browse/RUBY-2776
-        serverless: forbid
 
 database_name: &database_name "transaction-tests"
 collection_name: &collection_name "test"
@@ -387,7 +385,7 @@ tests:
         data:
           - _id: 1
 
-  - description: commitTransaction succeeds after NotMaster
+  - description: commitTransaction succeeds after NotWritablePrimary
 
     failPoint:
       configureFailPoint: failCommand
@@ -457,7 +455,7 @@ tests:
         data:
           - _id: 1
 
-  - description: commitTransaction succeeds after NotMasterOrSecondary
+  - description: commitTransaction succeeds after NotPrimaryOrSecondary
 
     failPoint:
       configureFailPoint: failCommand
@@ -527,7 +525,7 @@ tests:
         data:
           - _id: 1
 
-  - description: commitTransaction succeeds after NotMasterNoSlaveOk
+  - description: commitTransaction succeeds after NotPrimaryNoSecondaryOk
 
     failPoint:
       configureFailPoint: failCommand
@@ -1164,9 +1162,9 @@ tests:
       mode: { times: 1 }
       data:
           failCommands: ["commitTransaction"]
+          errorLabels: ["RetryableWriteError"]
           writeConcernError:
             code: 11600
-            errorLabels: ["RetryableWriteError"]
             errmsg: Replication is being shut down
 
     operations:
@@ -1240,9 +1238,9 @@ tests:
       mode: { times: 1 }
       data:
           failCommands: ["commitTransaction"]
+          errorLabels: ["RetryableWriteError"]
           writeConcernError:
             code: 11602
-            errorLabels: ["RetryableWriteError"]
             errmsg: Replication is being shut down
 
     operations:
@@ -1316,9 +1314,9 @@ tests:
       mode: { times: 1 }
       data:
           failCommands: ["commitTransaction"]
+          errorLabels: ["RetryableWriteError"]
           writeConcernError:
             code: 189
-            errorLabels: ["RetryableWriteError"]
             errmsg: Replication is being shut down
 
     operations:
@@ -1392,9 +1390,9 @@ tests:
       mode: { times: 1 }
       data:
           failCommands: ["commitTransaction"]
+          errorLabels: ["RetryableWriteError"]
           writeConcernError:
             code: 91
-            errorLabels: ["RetryableWriteError"]
             errmsg: Replication is being shut down
 
     operations:

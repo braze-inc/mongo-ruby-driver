@@ -444,8 +444,8 @@ module Mongo
     # @return [ Object ] The result of the block execution.
     #
     # @since 2.3.0
-    def with_connection(service_id: nil, &block)
-      pool.with_connection(service_id: service_id, &block)
+    def with_connection(connection_global_id: nil, &block)
+      pool.with_connection(connection_global_id: connection_global_id, &block)
     end
 
     # Handle handshake failure.
@@ -511,9 +511,15 @@ module Mongo
     # @note Retryable writes are only available on server versions 3.6+ and with
     #   sharded clusters or replica sets.
     #
+    # @note Some of the conditions in this method automatically return false for
+    #       for load balanced topologies. The conditions in this method should
+    #       always be true, since load-balanced topologies are only available on
+    #       MongoDB 5.0+, and not for standalone topologies. Therefore, we can
+    #       assume that retry writes are enabled.
+    #
     # @since 2.5.0
     def retry_writes?
-      !!(features.sessions_enabled? && logical_session_timeout && !standalone?)
+      !!(features.sessions_enabled? && logical_session_timeout && !standalone?) || load_balancer?
     end
 
     # Marks server unknown and publishes the associated SDAM event
@@ -532,8 +538,6 @@ module Mongo
     #   respective server is cleared. Set this option to true to keep the
     #   existing connection pool (required when handling not master errors
     #   on 4.2+ servers).
-    # @option options [ Object ] :service_id Discard state for the specified
-    #   service id only.
     # @option options [ TopologyVersion ] :topology_version Topology version
     #   of the error response that is causing the server to be marked unknown.
     # @option options [ true | false ] :stop_push_monitor Whether to stop

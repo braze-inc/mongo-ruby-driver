@@ -29,8 +29,16 @@ describe Mongo::Collection::View::Aggregation do
     described_class.new(view, pipeline, options)
   end
 
+  let(:server) do
+    double('server')
+  end
+
+  let(:session) do
+    double('session')
+  end
+
   let(:aggregation_spec) do
-    aggregation.send(:aggregate_spec, double('session'))
+    aggregation.send(:aggregate_spec, session, nil)
   end
 
   before do
@@ -351,15 +359,15 @@ describe Mongo::Collection::View::Aggregation do
 
   describe '#aggregate_spec' do
 
-    context 'when the collection has a read preference' do
+    context 'when a read preference is given' do
 
       let(:read_preference) do
-        {mode: :secondary}
+        BSON::Document.new({mode: :secondary})
       end
 
       it 'includes the read preference in the spec' do
-        allow(authorized_collection).to receive(:read_preference).and_return(read_preference)
-        expect(aggregation_spec[:read]).to eq(read_preference)
+        spec = aggregation.send(:aggregate_spec, session, read_preference)
+        expect(spec[:read]).to eq(read_preference)
       end
     end
 
@@ -570,109 +578,196 @@ describe Mongo::Collection::View::Aggregation do
   end
 
   context 'when $out is in the pipeline' do
-
-    let(:pipeline) do
-      [{
-           "$group" => {
-               "_id" => "$city",
-               "totalpop" => { "$sum" => "$pop" }
+    [['$out', 'string'], [:$out, 'symbol']].each do |op, type|
+      context "when #{op} is a #{type}" do
+        let(:pipeline) do
+          [{
+               "$group" => {
+                   "_id" => "$city",
+                   "totalpop" => { "$sum" => "$pop" }
+               }
+           },
+           {
+               op => 'output_collection'
            }
-       },
-       {
-           '$out' => 'output_collection'
-       }
-      ]
-    end
+          ]
+        end
 
-    before do
-      authorized_client['output_collection'].delete_many
-    end
+        before do
+          authorized_client['output_collection'].delete_many
+        end
 
-    context 'when $out is a string' do
+        let(:features) do
+          double()
+        end
 
-      it 'does not allow the operation on a secondary' do
-        expect(aggregation.send(:secondary_ok?)).to be(false)
+        let(:server) do
+          double().tap do |server|
+            allow(server).to receive(:features).and_return(features)
+          end
+        end
+
+        context 'when the view has a write concern' do
+
+          let(:collection) do
+            authorized_collection.with(write: INVALID_WRITE_CONCERN)
+          end
+
+          let(:view) do
+            Mongo::Collection::View.new(collection, selector, view_options)
+          end
+
+          context 'when the server supports write concern on the aggregate command' do
+            min_server_fcv '3.4'
+
+            it 'uses the write concern' do
+              expect {
+                aggregation.to_a
+              }.to raise_exception(Mongo::Error::OperationFailure)
+            end
+          end
+
+          context 'when the server does not support write concern on the aggregation command' do
+            max_server_version '3.2'
+
+            let(:documents) do
+              [
+                { city: "Berlin", pop: 18913, neighborhood: "Kreuzberg" },
+                { city: "Berlin", pop: 84143, neighborhood: "Mitte" },
+                { city: "New York", pop: 40270, neighborhood: "Brooklyn" }
+              ]
+            end
+
+            before do
+              authorized_collection.insert_many(documents)
+              aggregation.to_a
+            end
+
+            it 'does not apply the write concern' do
+              expect(authorized_client['output_collection'].find.count).to eq(2)
+            end
+          end
+        end
       end
     end
+  end
 
-    context 'when $out is a symbol' do
+  context "when there is a filter on the view" do
 
-      let(:pipeline) do
-        [{
-             "$group" => {
-                 "_id" => "$city",
-                 "totalpop" => { "$sum" => "$pop" }
-             }
-         },
-         {
-             :$out => 'output_collection'
-         }
+    context "when broken_view_aggregate is turned off" do
+      config_override :broken_view_aggregate, false
+
+      let(:documents) do
+        [
+          { city: "Berlin", pop: 18913, neighborhood: "Kreuzberg" },
+          { city: "Berlin", pop: 84143, neighborhood: "Mitte" },
+          { city: "New York", pop: 40270, neighborhood: "Brooklyn" }
         ]
       end
 
-      it 'does not allow the operation on a secondary' do
-        expect(aggregation.send(:secondary_ok?)).to be(false)
+      let(:pipeline) do
+        [{
+          "$project" => {
+            city: 1
+          }
+        }]
+      end
+
+      let(:view) do
+        authorized_collection.find(city: "Berlin")
+      end
+
+      before do
+        authorized_collection.delete_many
+        authorized_collection.insert_many(documents)
+      end
+
+      it "uses the filter on the view" do
+        expect(aggregation.to_a.length).to eq(2)
+      end
+
+      it "adds a match stage" do
+        expect(aggregation.pipeline.length).to eq(2)
+        expect(aggregation.pipeline.first).to eq({ :$match => { "city" => "Berlin" } })
       end
     end
 
+    context "when broken_view_aggregate is turned on" do
+      config_override :broken_view_aggregate, true
 
-    context 'when the server is not a valid for writing' do
+      let(:documents) do
+        [
+          { city: "Berlin", pop: 18913, neighborhood: "Kreuzberg" },
+          { city: "Berlin", pop: 84143, neighborhood: "Mitte" },
+          { city: "New York", pop: 40270, neighborhood: "Brooklyn" }
+        ]
+      end
 
-     it 'reroutes the operation to a primary' do
-       allow(aggregation).to receive(:valid_server?).and_return(false)
-       expect(Mongo::Logger.logger).to receive(:warn).and_call_original
-       aggregation.to_a
-     end
+      let(:pipeline) do
+        [{
+          "$project" => {
+            city: 1
+          }
+        }]
+      end
+
+      let(:view) do
+        authorized_collection.find(city: "Berlin")
+      end
+
+      before do
+        authorized_collection.delete_many
+        authorized_collection.insert_many(documents)
+      end
+
+      it "ignores the view filter" do
+        expect(aggregation.to_a.length).to eq(3)
+      end
+
+      it "does not add a match stage" do
+        expect(aggregation.pipeline.length).to eq(1)
+        expect(aggregation.pipeline).to eq([ { "$project" => { city: 1 } } ])
+      end
     end
+  end
 
-    context 'when the server is a valid for writing' do
+  context "when there is no filter on the view" do
 
-     it 'does not reroute the operation to a primary' do
-       expect(Mongo::Logger.logger).not_to receive(:warn)
-       aggregation.to_a
-     end
+    with_config_values :broken_view_aggregate, true, false do
 
-     context 'when the view has a write concern' do
+      let(:documents) do
+        [
+          { city: "Berlin", pop: 18913, neighborhood: "Kreuzberg" },
+          { city: "Berlin", pop: 84143, neighborhood: "Mitte" },
+          { city: "New York", pop: 40270, neighborhood: "Brooklyn" }
+        ]
+      end
 
-       let(:collection) do
-         authorized_collection.with(write: INVALID_WRITE_CONCERN)
-       end
+      let(:pipeline) do
+        [{
+          "$project" => {
+            city: 1
+          }
+        }]
+      end
 
-       let(:view) do
-         Mongo::Collection::View.new(collection, selector, view_options)
-       end
+      let(:view) do
+        authorized_collection.find
+      end
 
-       context 'when the server supports write concern on the aggregate command' do
-        min_server_fcv '3.4'
+      before do
+        authorized_collection.delete_many
+        authorized_collection.insert_many(documents)
+      end
 
-         it 'uses the write concern' do
-           expect {
-             aggregation.to_a
-           }.to raise_exception(Mongo::Error::OperationFailure)
-         end
-       end
+      it "ignores the view filter" do
+        expect(aggregation.to_a.length).to eq(3)
+      end
 
-       context 'when the server does not support write concern on the aggregation command' do
-        max_server_version '3.2'
-
-         let(:documents) do
-           [
-             { city: "Berlin", pop: 18913, neighborhood: "Kreuzberg" },
-             { city: "Berlin", pop: 84143, neighborhood: "Mitte" },
-             { city: "New York", pop: 40270, neighborhood: "Brooklyn" }
-           ]
-         end
-
-         before do
-           authorized_collection.insert_many(documents)
-           aggregation.to_a
-         end
-
-         it 'does not apply the write concern' do
-           expect(authorized_client['output_collection'].find.count).to eq(2)
-         end
-       end
-     end
+      it "does not add a match stage" do
+        expect(aggregation.pipeline.length).to eq(1)
+        expect(aggregation.pipeline).to eq([ { "$project" => { city: 1 } } ])
+      end
     end
   end
 end

@@ -8,6 +8,14 @@ require 'spec_helper'
 
 describe Mongo::Client do
 
+  let(:subscriber) { Mrss::EventSubscriber.new }
+
+  let(:monitored_client) do
+    root_authorized_client.tap do |client|
+      client.subscribe(Mongo::Monitoring::COMMAND, subscriber)
+    end
+  end
+
   describe '#==' do
 
     let(:client) do
@@ -584,6 +592,18 @@ describe Mongo::Client do
         expect(result.first).to eq(filter[:name])
       end
     end
+
+    context 'with comment' do
+      min_server_version '4.4'
+
+      it 'returns a list of database names and send comment' do
+        result = monitored_client.database_names({}, comment: "comment")
+        expect(result).to include('admin')
+        command = subscriber.command_started_events("listDatabases").last&.command
+        expect(command).not_to be_nil
+        expect(command["comment"]).to eq("comment")
+      end
+    end
   end
 
   describe '#list_databases' do
@@ -677,6 +697,20 @@ describe Mongo::Client do
         expect(command[:authorizedDatabases]).to be_nil
       end
     end
+
+    context 'with comment' do
+      min_server_version '4.4'
+
+      it 'returns a list of database names and send comment' do
+        result = monitored_client.list_databases({}, false, comment: "comment").collect do |i|
+          i['name']
+        end
+        expect(result).to include('admin')
+        command = subscriber.command_started_events("listDatabases").last&.command
+        expect(command).not_to be_nil
+        expect(command["comment"]).to eq("comment")
+      end
+    end
   end
 
   describe '#list_mongo_databases' do
@@ -717,6 +751,18 @@ describe Mongo::Client do
       it 'returns a filtered list of Mongo::Database objects' do
         expect(result.length).to eq(1)
         expect(result.first.name).to eq(filter[:name])
+      end
+    end
+
+    context 'with comment' do
+      min_server_version '4.4'
+
+      it 'returns a list of database names and send comment' do
+        result = monitored_client.list_mongo_databases({}, comment: "comment")
+        expect(result).to all(be_a(Mongo::Database))
+        command = subscriber.command_started_events("listDatabases").last&.command
+        expect(command).not_to be_nil
+        expect(command["comment"]).to eq("comment")
       end
     end
   end
@@ -790,7 +836,8 @@ describe Mongo::Client do
         expect(session).to be_a(Mongo::Session)
       end
 
-      it 'sets the last use field to the current time', retry: 4 do
+      retry_test tries: 4
+      it 'sets the last use field to the current time' do
         expect(session.instance_variable_get(:@server_session).last_use).to be_within(1).of(Time.now)
       end
 
@@ -871,6 +918,255 @@ describe Mongo::Client do
         it 'uses the session and updates the last use time' do
           authorized_client.database.command(ping: 1)
           expect(before_last_use).to be < (pool.instance_variable_get(:@queue)[0].last_use)
+        end
+      end
+
+      context 'when an implicit session is used without enough connections' do
+        require_no_multi_mongos
+        require_wired_tiger
+
+        let(:client) do
+          authorized_client.with(options).tap do |cl|
+            cl.subscribe(Mongo::Monitoring::COMMAND, subscriber)
+          end
+        end
+
+        let(:options) do
+          { :max_pool_size => 1, :retry_writes => true }
+        end
+
+        shared_examples "a single connection" do
+          # JRuby, due to being concurrent, does not like rspec setting mocks
+          # in threads while other threads are calling the methods being mocked.
+          # My theory is that rspec removes & redefines methods as part of
+          # the mocking process, but while a method is undefined JRuby is
+          # running another thread that calls it leading to this exception:
+          # NoMethodError: undefined method `with_connection' for #<Mongo::Server:0x5386 address=localhost:27017 PRIMARY>
+          fails_on_jruby
+
+          before do
+            sessions_checked_out = 0
+
+            allow_any_instance_of(Mongo::Server).to receive(:with_connection).and_wrap_original do |m, *args, &block|
+              m.call(*args) do |connection|
+                sessions_checked_out = 0
+                res = block.call(connection)
+                expect(sessions_checked_out).to be < 2
+                res
+              end
+            end
+
+            allow_any_instance_of(Mongo::Session).to receive(:materialize).and_wrap_original do |m, *args|
+              sessions_checked_out += 1
+              m.call(*args).tap do
+                checked_out_connections = args[0].connection_pool.instance_variable_get("@checked_out_connections")
+                expect(checked_out_connections.length).to eq 1
+              end
+            end
+          end
+
+          it 'doesn\'t have any live sessions' do
+            threads.each do |thread|
+              thread.join
+            end
+          end
+        end
+
+        context "when doing three inserts" do
+          let(:threads) do
+            (1..3).map do |i|
+              Thread.new do
+                client['test'].insert_one({test: "test#{i}"})
+              end
+            end
+          end
+
+          include_examples "a single connection"
+        end
+
+        context "when doing an insert and two updates" do
+          let(:threads) do
+            threads = []
+            threads << Thread.new do
+              client['test'].insert_one({test: "test"})
+            end
+            threads << Thread.new do
+              client['test'].update_one({test: "test"}, { "$set" => { test: "test2" } })
+            end
+            threads << Thread.new do
+              client['test'].update_one({test: "test"}, { "$set" => { test: "test2" } })
+            end
+            threads
+          end
+
+          include_examples "a single connection"
+        end
+
+        context "when doing an insert, update and delete" do
+          let(:threads) do
+            threads = []
+            threads << Thread.new do
+              client['test'].insert_one({test: "test"})
+            end
+            threads << Thread.new do
+              client['test'].update_one({test: "test"}, { "$set" => { test: "test2" } })
+            end
+            threads << Thread.new do
+              client['test'].delete_one({test: "test"})
+            end
+            threads
+          end
+
+          include_examples "a single connection"
+        end
+
+        context "when doing an insert, update and find" do
+          let(:threads) do
+            threads = []
+            threads << Thread.new do
+              client['test'].insert_one({test: "test"})
+            end
+            threads << Thread.new do
+              client['test'].update_one({test: "test"}, { "$set" => { test: "test2" } })
+            end
+            threads << Thread.new do
+              client['test'].find({test: "test"}).to_a
+            end
+            threads
+          end
+
+          include_examples "a single connection"
+        end
+
+        context "when doing an insert, update and bulk write" do
+          let(:threads) do
+            threads = []
+            threads << Thread.new do
+              client['test'].insert_one({test: "test"})
+            end
+            threads << Thread.new do
+              client['test'].update_one({test: "test"}, { "$set" => { test: "test2" } })
+            end
+            threads << Thread.new do
+              client['test'].bulk_write([{ insert_one: { test: "test1" } },
+                                         { update_one: { filter: { test: "test1" }, update: { "$set" => { test: "test2" } } } } ])
+            end
+            threads
+          end
+
+          include_examples "a single connection"
+        end
+
+        context "when doing an insert, update and find_one_and_delete" do
+          let(:threads) do
+            threads = []
+            threads << Thread.new do
+              client['test'].insert_one({test: "test"})
+            end
+            threads << Thread.new do
+              client['test'].update_one({test: "test"}, { "$set" => { test: "test2" } })
+            end
+            threads << Thread.new do
+              client['test'].find_one_and_delete({test: "test"})
+            end
+            threads
+          end
+
+          include_examples "a single connection"
+        end
+
+        context "when doing an insert, update and find_one_and_update" do
+          let(:threads) do
+            threads = []
+            threads << Thread.new do
+              client['test'].insert_one({test: "test"})
+            end
+            threads << Thread.new do
+              client['test'].update_one({test: "test"}, { "$set" => { test: "test2" } })
+            end
+            threads << Thread.new do
+              client['test'].find_one_and_update({test: "test"}, {test: "test2"})
+            end
+            threads
+          end
+
+          include_examples "a single connection"
+        end
+
+        context "when doing an insert, update and find_one_and_replace" do
+          let(:threads) do
+            threads = []
+            threads << Thread.new do
+              client['test'].insert_one({test: "test"})
+            end
+            threads << Thread.new do
+              client['test'].update_one({test: "test"}, { "$set" => { test: "test2" } })
+            end
+            threads << Thread.new do
+              client['test'].find_one_and_replace({test: "test"}, {test: "test2"})
+            end
+            threads
+          end
+
+          include_examples "a single connection"
+        end
+
+        context "when doing an insert, update and a replace" do
+          let(:threads) do
+            threads = []
+            threads << Thread.new do
+              client['test'].insert_one({test: "test"})
+            end
+            threads << Thread.new do
+              client['test'].update_one({test: "test"}, { "$set" => { test: "test2" } })
+            end
+            threads << Thread.new do
+              client['test'].replace_one({test: "test"}, {test: "test2"})
+            end
+            threads
+          end
+
+          include_examples "a single connection"
+        end
+
+        context "when doing all of the operations" do
+          let(:threads) do
+            threads = []
+            threads << Thread.new do
+              client['test'].insert_one({test: "test"})
+            end
+            threads << Thread.new do
+              client['test'].update_one({ test: "test" }, { "$set" => { test: 1 } })
+            end
+            threads << Thread.new do
+              client['test'].find_one_and_replace({test: "test"}, {test: "test2"})
+            end
+            threads << Thread.new do
+              client['test'].delete_one({test: "test"})
+            end
+            threads << Thread.new do
+              client['test'].find({test: "test"}).to_a
+            end
+            threads << Thread.new do
+              client['test'].bulk_write([{ insert_one: { test: "test1" } },
+                                         { update_one: { filter: { test: "test1" }, update: { "$set" => { test: "test2" } } } } ])
+            end
+            threads << Thread.new do
+              client['test'].find_one_and_delete({test: "test"})
+            end
+            threads << Thread.new do
+              client['test'].find_one_and_update({test: "test"}, {test: "test2"})
+            end
+            threads << Thread.new do
+              client['test'].find_one_and_replace({test: "test"}, {test: "test2"})
+            end
+            threads << Thread.new do
+              client['test'].replace_one({test: "test"}, {test: "test2"})
+            end
+            threads
+          end
+
+          include_examples "a single connection"
         end
       end
     end

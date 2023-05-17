@@ -2,6 +2,7 @@
 # encoding: utf-8
 
 require 'runners/crud/requirement'
+require 'runners/unified/client_side_encryption_operations'
 require 'runners/unified/crud_operations'
 require 'runners/unified/grid_fs_operations'
 require 'runners/unified/ddl_operations'
@@ -9,16 +10,19 @@ require 'runners/unified/change_stream_operations'
 require 'runners/unified/support_operations'
 require 'runners/unified/assertions'
 require 'support/utils'
+require 'support/crypt'
 
 module Unified
 
   class Test
+    include ClientSideEncryptionOperations
     include CrudOperations
     include GridFsOperations
     include DdlOperations
     include ChangeStreamOperations
     include SupportOperations
     include Assertions
+    include RSpec::Core::Pending
 
     def initialize(spec, **opts)
       @spec = spec
@@ -132,11 +136,11 @@ module Unified
 
           create_client(**opts).tap do |client|
             @observe_sensitive = spec.use('observeSensitiveCommands')
+            subscriber = (@subscribers[client] ||= EventSubscriber.new)
             if oe = spec.use('observeEvents')
               oe.each do |event|
                 case event
                 when 'commandStartedEvent', 'commandSucceededEvent', 'commandFailedEvent'
-                  subscriber = (@subscribers[client] ||= EventSubscriber.new)
                   unless client.send(:monitoring).subscribers[Mongo::Monitoring::COMMAND].include?(subscriber)
                     client.subscribe(Mongo::Monitoring::COMMAND, subscriber)
                   end
@@ -146,7 +150,6 @@ module Unified
                     subscriber.ignore_commands(ignore_events)
                   end
                 when /\A(?:pool|connection)/
-                  subscriber = (@subscribers[client] ||= EventSubscriber.new)
                   unless client.send(:monitoring).subscribers[Mongo::Monitoring::CONNECTION_POOL]&.include?(subscriber)
                     client.subscribe(Mongo::Monitoring::CONNECTION_POOL, subscriber)
                   end
@@ -160,13 +163,24 @@ module Unified
           end
         when 'database'
           client = entities.get(:client, spec.use!('client'))
-          client.use(spec.use!('databaseName')).database
+          opts = Utils.snakeize_hash(spec.use('databaseOptions') || {})
+            .merge(database: spec.use!('databaseName'))
+          if opts.key?(:read_preference)
+            opts[:read] = opts.delete(:read_preference)
+            if opts[:read].key?(:max_staleness_seconds)
+              opts[:read][:max_staleness] = opts[:read].delete(:max_staleness_seconds)
+            end
+          end
+          client.with(opts).database
         when 'collection'
           database = entities.get(:database, spec.use!('database'))
           # TODO verify
           opts = Utils.snakeize_hash(spec.use('collectionOptions') || {})
           if opts.key?(:read_preference)
             opts[:read] = opts.delete(:read_preference)
+            if opts[:read].key?(:max_staleness_seconds)
+              opts[:read][:max_staleness] = opts[:read].delete(:max_staleness_seconds)
+            end
           end
           database[spec.use!('collectionName'), opts]
         when 'bucket'
@@ -182,6 +196,61 @@ module Unified
           end
 
           client.start_session(**opts)
+        when 'clientEncryption'
+          client_encryption_opts = spec.use!('clientEncryptionOpts')
+          key_vault_client = entities.get(:client, client_encryption_opts['keyVaultClient'])
+          opts = {
+            key_vault_namespace: client_encryption_opts['keyVaultNamespace'],
+            kms_providers: Utils.snakeize_hash(client_encryption_opts['kmsProviders']),
+            kms_tls_options: {
+              kmip: {
+                ssl_cert: SpecConfig.instance.fle_kmip_tls_certificate_key_file,
+                ssl_key: SpecConfig.instance.fle_kmip_tls_certificate_key_file,
+                ssl_ca_cert: SpecConfig.instance.fle_kmip_tls_ca_file
+              }
+            }
+          }
+          opts[:kms_providers] = opts[:kms_providers].map do |provider, options|
+            converted_options = options.map do |key, value|
+              converted_value = if value == { '$$placeholder'.to_sym => 1 }
+                case provider
+                when :aws
+                  case key
+                  when :access_key_id then SpecConfig.instance.fle_aws_key
+                  when :secret_access_key then SpecConfig.instance.fle_aws_secret
+                  end
+                when :azure
+                  case key
+                  when :tenant_id then SpecConfig.instance.fle_azure_tenant_id
+                  when :client_id then SpecConfig.instance.fle_azure_client_id
+                  when :client_secret then SpecConfig.instance.fle_azure_client_secret
+                  end
+                when :gcp
+                  case key
+                  when :email then SpecConfig.instance.fle_gcp_email
+                  when :private_key then SpecConfig.instance.fle_gcp_private_key
+                  end
+                when :kmip
+                  case key
+                  when :endpoint then SpecConfig.instance.fle_kmip_endpoint
+                  end
+                when :local
+                  case key
+                  when :key then Crypt::LOCAL_MASTER_KEY
+                  end
+                end
+              else
+                value
+              end
+              [key, converted_value]
+            end.to_h
+            [provider, converted_options]
+          end.to_h
+
+          Mongo::ClientEncryption.new(
+            key_vault_client,
+            opts
+          )
         else
           raise NotImplementedError, "Unknown type #{type}"
         end
@@ -195,7 +264,8 @@ module Unified
     def set_initial_data
       @spec['initialData']&.each do |entity_spec|
         spec = UsingHash[entity_spec]
-        collection = root_authorized_client.use(spec.use!('databaseName'))[spec.use!('collectionName')]
+        collection = root_authorized_client.with(write_concern: {w: :majority}).
+          use(spec.use!('databaseName'))[spec.use!('collectionName')]
         collection.drop
         docs = spec.use!('documents')
         if docs.any?
@@ -266,10 +336,19 @@ module Unified
         if name.to_s == 'loop'
           method_name = "_#{name}"
         end
+
+        if ["modify_collection"].include?(name.to_s)
+          skip "Mongo Ruby Driver does not support #{name.to_s}"
+        end
+
         if expected_error = op.use('expectError')
           begin
-            send(method_name, op)
-          rescue Mongo::Error, BSON::String::IllegalKey => e
+            unless respond_to?(method_name)
+              raise Error::UnsupportedOperation, "Mongo Ruby Driver does not support #{name.to_s}"
+            end
+
+            public_send(method_name, op)
+          rescue Mongo::Error, BSON::String::IllegalKey, ArgumentError => e
             if expected_error.use('isClientError')
               # isClientError doesn't actually mean a client error.
               # It means anything other than OperationFailure. DRIVERS-1799
@@ -320,10 +399,16 @@ module Unified
             raise Error::ErrorMismatch, "Expected exception but none was raised"
           end
         else
+          unless respond_to?(method_name, true)
+            raise Error::UnsupportedOperation, "Mongo Ruby Driver does not support #{name.to_s}"
+          end
+
           result = send(method_name, op)
           if expected_result = op.use('expectResult')
-            if result.nil? && !expected_result.empty?
-              raise Error::ResultMismatch, "Actual result nil but expected result #{expected_result}"
+            if result.nil? && expected_result.keys == ["$$unsetOrMatches"]
+              return
+            elsif result.nil? && !expected_result.empty?
+              raise Error::ResultMismatch, "#{msg}: expected #{expected} but got nil"
             elsif Array === expected_result
               assert_documents_match(result, expected_result)
             else

@@ -18,6 +18,14 @@ describe Mongo::Database do
     end
   end
 
+  let(:subscriber) { Mrss::EventSubscriber.new }
+
+  let(:monitored_client) do
+    root_authorized_client.tap do |client|
+      client.subscribe(Mongo::Monitoring::COMMAND, subscriber)
+    end
+  end
+
   describe '#==' do
 
     let(:database) do
@@ -278,6 +286,18 @@ describe Mongo::Database do
         collection_names.should include('coll-119')
       end
     end
+
+    context 'with comment' do
+      min_server_version '4.4'
+
+      it 'returns collection names and send comment' do
+        database = described_class.new(monitored_client, SpecConfig.instance.test_db)
+        database.collection_names(comment: "comment")
+        command = subscriber.command_started_events("listCollections").last&.command
+        expect(command).not_to be_nil
+        expect(command["comment"]).to eq("comment")
+      end
+    end
   end
 
   describe '#list_collections' do
@@ -479,6 +499,18 @@ describe Mongo::Database do
         collection_names.should include('coll-119')
       end
     end
+
+    context 'with comment' do
+      min_server_version '4.4'
+
+      it 'returns collection names and send comment' do
+        database = described_class.new(monitored_client, SpecConfig.instance.test_db)
+        database.list_collections(comment: "comment")
+        command = subscriber.command_started_events("listCollections").last&.command
+        expect(command).not_to be_nil
+        expect(command["comment"]).to eq("comment")
+      end
+    end
   end
 
   describe '#collections' do
@@ -591,7 +623,7 @@ describe Mongo::Database do
           end
         end
 
-        context 'when authorized_collections are provided' do
+        context 'when authorized_collections are provided as false' do
           let(:options) do
             { authorized_collections: false }
           end
@@ -609,6 +641,27 @@ describe Mongo::Database do
             command = events.first.command
             expect(command['nameOnly']).to eq(true)
             expect(command['authorizedCollections']).to be_nil
+          end
+        end
+
+        context 'when authorized_collections are provided as true' do
+          let(:options) do
+            { authorized_collections: true }
+          end
+
+          let!(:result) do
+            database.collections(options)
+          end
+
+          let(:events) do
+            subscriber.command_started_events('listCollections')
+          end
+
+          it 'authorized_collections not passed to server because false' do
+            expect(events.length).to eq(1)
+            command = events.first.command
+            expect(command['nameOnly']).to eq(true)
+            expect(command['authorizedCollections']).to eq(true)
           end
         end
 
@@ -645,6 +698,18 @@ describe Mongo::Database do
         collections.length.should == 120
         collection_names.should include('coll-0')
         collection_names.should include('coll-119')
+      end
+    end
+
+    context 'with comment' do
+      min_server_version '4.4'
+
+      it 'returns collection names and send comment' do
+        database = described_class.new(monitored_client, SpecConfig.instance.test_db)
+        database.collections(comment: "comment")
+        command = subscriber.command_started_events("listCollections").last&.command
+        expect(command).not_to be_nil
+        expect(command["comment"]).to eq("comment")
       end
     end
   end
