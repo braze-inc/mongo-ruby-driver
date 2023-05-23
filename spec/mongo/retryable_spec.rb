@@ -113,6 +113,7 @@ describe Mongo::Retryable do
     double('cluster', next_primary: server).tap do |cluster|
       allow(cluster).to receive(:replica_set?).and_return(true)
       allow(cluster).to receive(:addresses).and_return(['x'])
+      allow(cluster).to receive(:servers)
     end
   end
 
@@ -184,6 +185,7 @@ describe Mongo::Retryable do
         expect(operation).to receive(:execute).and_raise(Mongo::Error::SocketError).ordered
         expect(retryable).to receive(:select_server).ordered
         expect(operation).to receive(:execute).and_return(true).ordered
+        allow(client).to receive(:read_retry_interval).and_return(0)
       end
 
       it 'executes the operation twice' do
@@ -198,6 +200,7 @@ describe Mongo::Retryable do
         expect(operation).to receive(:execute).and_raise(Mongo::Error::SocketTimeoutError).ordered
         expect(retryable).to receive(:select_server).ordered
         expect(operation).to receive(:execute).and_return(true).ordered
+        allow(client).to receive(:read_retry_interval).and_return(0)
       end
 
       it 'executes the operation twice' do
@@ -379,6 +382,8 @@ describe Mongo::Retryable do
     end
 
     shared_examples 'executes the operation twice' do
+      before { allow(client).to receive(:read_retry_interval).and_return(0) }
+
       it 'executes the operation twice' do
         expect(retryable.write).to be true
       end
@@ -418,7 +423,9 @@ describe Mongo::Retryable do
       end
 
       before do
-        expect(operation).to receive(:execute).and_raise(error).ordered
+        expect(operation).to receive(:execute).and_raise(error).twice
+        allow(client).to receive(:read_retry_interval).and_return(0)
+        allow(cluster).to receive(:scan!)
       end
 
       it 'raises an exception' do
@@ -436,7 +443,9 @@ describe Mongo::Retryable do
       end
 
       before do
-        expect(operation).to receive(:execute).and_raise(error).ordered
+        expect(operation).to receive(:execute).and_raise(error).twice
+        allow(client).to receive(:read_retry_interval).and_return(0)
+        allow(cluster).to receive(:scan!)
       end
 
       it 'raises an exception' do
