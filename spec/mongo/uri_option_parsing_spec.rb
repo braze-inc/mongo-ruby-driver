@@ -622,4 +622,18 @@ describe Mongo::URI do
       expect(uri.uri_options[ruby_option]).to eq(7)
     end
   end
+
+  context 'zstdCompressionLevel' do
+
+    let(:uri_option) { 'zstdCompressionLevel' }
+    let(:ruby_option) { :zstd_compression_level }
+
+    let(:string) { "mongodb://example.com/?#{uri_option}=7" }
+
+    it_behaves_like 'parses successfully'
+
+    it 'is an integer' do
+      expect(uri.uri_options[ruby_option]).to eq(7)
+    end
+  end
 end
