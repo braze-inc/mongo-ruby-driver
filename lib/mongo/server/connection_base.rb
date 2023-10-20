@@ -266,8 +266,7 @@ module Mongo
         # bson size limit, the message will be serialized twice. The operations
         # layer should be refactored to allow compression on an already-
         # serialized message.
-        compression_level = compressor == 'zstd' ? options[:zstd_compression_level] : options[:zlib_compression_level]
-        final_message = message.maybe_compress(compressor, compression_level)
+        final_message = message.maybe_compress(compressor, options[:zlib_compression_level])
         final_message.serialize(buffer, max_bson_size, MAX_BSON_COMMAND_OVERHEAD)
 
         buffer

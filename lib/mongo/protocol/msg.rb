@@ -161,15 +161,15 @@ module Mongo
       # Otherwise returns self.
       #
       # @param [ String, Symbol ] compressor The compressor to use.
-      # @param [ Integer ] compression_level The zlib compression level to use.
+      # @param [ Integer ] zlib_compression_level The zlib compression level to use.
       #
       # @return [ Message ] A Protocol::Compressed message or self,
       #  depending on whether this message can be compressed.
       #
       # @since 2.5.0
       # @api private
-      def maybe_compress(compressor, compression_level = nil)
-        compress_if_possible(command.keys.first, compressor, compression_level)
+      def maybe_compress(compressor, zlib_compression_level = nil)
+        compress_if_possible(command.keys.first, compressor, zlib_compression_level)
       end
 
       # Reverse-populates the instance variables after deserialization sets

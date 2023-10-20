@@ -72,17 +72,17 @@ module Mongo
       #
       # @param [ Mongo::Protocol::Message ] message The original message.
       # @param [ String, Symbol ] compressor The compression algorithm to use.
-      # @param [ Integer ] compression_level The zstd/zlib compression level to use.
+      # @param [ Integer ] zlib_compression_level The zlib compression level to use.
       #   -1 and nil imply default.
       #
       # @since 2.5.0
-      def initialize(message, compressor, compression_level = nil)
+      def initialize(message, compressor, zlib_compression_level = nil)
         @original_message = message
         @original_op_code = message.op_code
         @uncompressed_size = 0
         @compressor_id = COMPRESSOR_ID_MAP[compressor]
         @compressed_message = ''
-        @compression_level = compression_level if compression_level && compression_level != -1
+        @zlib_compression_level = zlib_compression_level if zlib_compression_level && zlib_compression_level != -1
         @request_id = message.request_id
       end
 
@@ -157,12 +157,12 @@ module Mongo
         if @compressor_id == NOOP_BYTE
           buffer.to_s.force_encoding(BSON::BINARY)
         elsif @compressor_id == ZLIB_BYTE
-          Zlib::Deflate.deflate(buffer.to_s, @compression_level).force_encoding(BSON::BINARY)
+          Zlib::Deflate.deflate(buffer.to_s, @zlib_compression_level).force_encoding(BSON::BINARY)
         elsif @compressor_id == SNAPPY_BYTE
           Snappy.deflate(buffer.to_s).force_encoding(BSON::BINARY)
         elsif @compressor_id == ZSTD_BYTE
           # DRIVERS-600 will allow this to be configurable in the future
-          Zstd.compress(buffer.to_s, @compression_level).force_encoding(BSON::BINARY)
+          Zstd.compress(buffer.to_s).force_encoding(BSON::BINARY)
         end
       end
 

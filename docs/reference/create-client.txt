@@ -864,11 +864,6 @@ Ruby Options
      - ``Integer``
      - none
 
-   * - ``:zstd_compression_level``
-     - The Zstd compression level to use, if using compression. See Ruby's Zstd module for valid levels.
-     - ``Integer``
-     - none
-
 .. note::
 
   The Ruby driver does not implement certificate revocation list (CRL)
@@ -1077,9 +1072,6 @@ URI options are explained in detail in the :manual:`Connection URI reference
 
    * - zlibCompressionLevel=Integer
      - ``:zlib_compression_level => Integer``
-
-   * - zstdCompressionLevel=Integer
-     - ``:zstd_compression_level => Integer``
 
 .. note::
 

@@ -668,19 +668,6 @@ describe Mongo::Client do
         end
       end
 
-      context 'when a zstd_compression_level option is provided' do
-        require_compression
-        min_server_fcv '4.2'
-
-        let(:client) do
-          new_local_client_nmio(SpecConfig.instance.addresses, SpecConfig.instance.test_options.merge(zstd_compression_level: 1))
-        end
-
-        it 'sets the option on the client' do
-          expect(client.options[:zstd_compression_level]).to eq(1)
-        end
-      end
-
       context 'when ssl options are provided' do
 
         let(:options) do

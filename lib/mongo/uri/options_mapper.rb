@@ -282,7 +282,6 @@ module Mongo
       uri_option 'retryReads', :retry_reads, type: :bool
       uri_option 'retryWrites', :retry_writes, type: :bool
       uri_option 'zlibCompressionLevel', :zlib_compression_level, type: :zlib_compression_level
-      uri_option 'zstdCompressionLevel', :zstd_compression_level, type: :zstd_compression_level
 
       # Converts +value+ to a boolean.
       #
@@ -594,31 +593,6 @@ module Mongo
       def revert_zlib_compression_level(value)
         value
       end
-
-      # Parses the zstd compression level.
-      #
-      # @param [ String ] name Name of the URI option being processed.
-      # @param value [ String ] The zstd compression level string.
-      #
-      # @return [ Integer | nil ] The compression level value if it is between 1 and 22 (inclusive),
-      #   otherwise nil (and a warning will be logged).
-      def convert_zstd_compression_level(name, value)
-        if /\A-?\d+\z/ =~ value
-          i = value.to_i
-
-          if i >= 1 && i <= 22
-            return i
-          end
-        end
-
-        log_warn("#{value} is not a valid zstdCompressionLevel")
-        nil
-      end
-
-      def revert_zstd_compression_level(value)
-        value
-      end
-
 
       # Extract values from the string and put them into a nested hash.
       #

@@ -102,14 +102,14 @@ module Mongo
       # the command being sent permits compression. Otherwise returns self.
       #
       # @param [ String, Symbol ] compressor The compressor to use.
-      # @param [ Integer ] compression_level The zlib compression level to use.
+      # @param [ Integer ] zlib_compression_level The zlib compression level to use.
       #
       # @return [ self ] Always returns self. Other message types should
       #   override this method.
       #
       # @since 2.5.0
       # @api private
-      def maybe_compress(compressor, compression_level = nil)
+      def maybe_compress(compressor, zlib_compression_level = nil)
         self
       end
 
@@ -118,15 +118,15 @@ module Mongo
       #
       # @param [ String ] command_name Command name extracted from the message.
       # @param [ String | Symbol ] compressor The compressor to use.
-      # @param [ Integer ] compression_level Zlib compression level to use.
+      # @param [ Integer ] zlib_compression_level Zlib compression level to use.
       #
       # @return [ Message ] A Protocol::Compressed message or self,
       #  depending on whether this message can be compressed.
       #
       # @since 2.5.0
-      private def compress_if_possible(command_name, compressor, compression_level)
+      private def compress_if_possible(command_name, compressor, zlib_compression_level)
         if compressor && compression_allowed?(command_name)
-          Compressed.new(self, compressor, compression_level)
+          Compressed.new(self, compressor, zlib_compression_level)
         else
           self
         end
