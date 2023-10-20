@@ -114,6 +114,7 @@ module Mongo
       :write,
       :write_concern,
       :zlib_compression_level,
+      :zstd_compression_level,
     ].freeze
 
     # The compression algorithms supported by the driver.
@@ -411,6 +412,8 @@ module Mongo
     #   Can be :w => Integer|String, :wtimeout => Integer (in milliseconds),
     #   :j => Boolean, :fsync => Boolean.
     # @option options [ Integer ] :zlib_compression_level The Zlib compression level to use, if using compression.
+    #   See Ruby's Zlib module for valid levels.
+    # @option options [ Integer ] :zstd_compression_level The Zstd compression level to use, if using compression.
     #   See Ruby's Zlib module for valid levels.
     # @option options [ Hash ] :resolv_options For internal driver use only.
     #   Options to pass through to Resolv::DNS constructor for SRV lookups.

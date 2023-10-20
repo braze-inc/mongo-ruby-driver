@@ -1282,5 +1282,14 @@ describe Mongo::URI do
         expect(client.options[:zlib_compression_level]).to eq(6)
       end
     end
+
+    context 'when a zstdCompressionLevel option is provided' do
+      let(:options) { "zstdCompressionLevel=21" }
+
+      it 'sets the zstd compression level on the client' do
+        client = new_local_client_nmio(string)
+        expect(client.options[:zstd_compression_level]).to eq(21)
+      end
+    end
   end
 end
