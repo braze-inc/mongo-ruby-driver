@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -98,6 +98,28 @@ describe 'Client construction' do
 
       it 'sets server type to primary' do
         expect(server.description).to be_primary
+      end
+    end
+
+    # This test requires a PSA deployment. The port number is fixed for our
+    # Evergreen/Docker setups.
+    context 'when directly connecting to arbiters' do
+      let(:options) do
+        SpecConfig.instance.test_options.tap do |opt|
+          opt.delete(:connect)
+          opt.delete(:replica_set)
+          opt.update(direct_connection: true)
+        end
+      end
+
+      let(:client) do
+        new_local_client(['localhost:27019'], options)
+      end
+
+      let(:response) { client.command(ismaster: 1).documents.first }
+
+      it 'connects' do
+        response.fetch('arbiterOnly').should be true
       end
     end
   end

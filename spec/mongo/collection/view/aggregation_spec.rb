@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -321,7 +321,12 @@ describe Mongo::Collection::View::Aggregation do
           min_server_fcv '4.2'
 
           let(:result) do
-            aggregation.explain['queryPlanner']['collation']['locale']
+            if aggregation.explain.key?('queryPlanner')
+              aggregation.explain['queryPlanner']['collation']['locale']
+            else
+              # 7.2+ sharded cluster
+              aggregation.explain['shards'].first.last['queryPlanner']['collation']['locale']
+            end
           end
 
           it_behaves_like 'applies the collation'

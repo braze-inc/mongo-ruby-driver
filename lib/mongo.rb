@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -38,6 +38,7 @@ require 'mongo/id'
 require 'mongo/bson'
 require 'mongo/semaphore'
 require 'mongo/distinguishing_semaphore'
+require 'mongo/condition_variable'
 require 'mongo/options'
 require 'mongo/loggable'
 require 'mongo/cluster_time'
@@ -63,6 +64,7 @@ require 'mongo/client_encryption'
 require 'mongo/dbref'
 require 'mongo/grid'
 require 'mongo/index'
+require 'mongo/search_index/view'
 require 'mongo/lint'
 require 'mongo/query_cache'
 require 'mongo/server'

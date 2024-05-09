@@ -93,7 +93,7 @@ Specify a ``Decimal128`` number
 .. versionadded:: 3.4
 
 :manual:`Decimal128</tutorial/model-monetary-data>` is a
-:doc:`BSON datatype </bson-tutorials>`
+:doc:`BSON datatype </tutorials/bson>`
 that employs 128-bit decimal-based floating-point values capable
 of emulating decimal rounding with exact precision. This
 functionality is intended for applications that handle
@@ -458,7 +458,7 @@ part of the command:
 
 .. code-block:: ruby
 
-  client.database.command(collstats: 'test', readConcern: {level: :majority})
+  client.database.command(dbStats: 1, readConcern: {level: :majority})
 
 
 .. _read-preference:
@@ -504,7 +504,7 @@ option when a command is run on a database:
                                     } )
 
   # Set read preference for a given command
-  client.database.command( { collstats: 'test' }, read: { mode: secondary,
+  client.database.command( { dbStats: 1 }, read: { mode: secondary,
                                                        tag_sets: [ { 'dc' => 'nyc' } ] } )
 
 Read preference can also be set for specific operations on a collection
@@ -988,7 +988,7 @@ for more information on working with these types of fields.
 A Note about the BSON Symbol type
 =================================
 
-Because the BSON specification deprecated the BSON symbol type, the `bson` gem
+Because the BSON specification deprecated the BSON symbol type, the ``bson`` gem
 will serialize Ruby symbols into BSON strings when used on its own. However, in
 order to maintain backwards compatibility with older datasets, the Ruby driver
 overrides this behavior to serialize Ruby symbols as BSON symbols. This is

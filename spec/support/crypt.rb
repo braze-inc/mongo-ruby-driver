@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2009-2020 MongoDB Inc.
 #
@@ -115,7 +115,16 @@ module Crypt
     end
 
     let(:encrypted_fields) do
-      BSON::ExtJSON.parse(File.read('spec/support/crypt/encryptedFields.json'))
+      BSON::ExtJSON.parse(File.read('spec/support/crypt/encrypted_fields/encryptedFields.json'))
+    end
+
+    %w[DecimalNoPrecision DecimalPrecision Date DoubleNoPrecision DoublePrecision Int Long].each do |type|
+      let("range_encrypted_fields_#{type.downcase}".to_sym) do
+        BSON::ExtJSON.parse(
+          File.read("spec/support/crypt/encrypted_fields/range-encryptedFields-#{type}.json"),
+          mode: :bson
+        )
+      end
     end
 
     let(:key1_document) do
@@ -139,6 +148,7 @@ module Crypt
     let(:schema_map) do
       BSON::ExtJSON.parse(File.read(schema_map_file_path))
     end
+
     let(:data_key_options) { {} }
 
     let(:encrypted_ssn) do
@@ -300,7 +310,7 @@ module Crypt
         'MONGO_RUBY_DRIVER_GCP_PRIVATE_KEY, ' +
         'MONGO_RUBY_DRIVER_GCP_PROJECT_ID, MONGO_RUBY_DRIVER_GCP_LOCATION, ' +
         'MONGO_RUBY_DRIVER_GCP_KEY_RING, MONGO_RUBY_DRIVER_GCP_KEY_NAME ' +
-        'environment variables to be set information from Azure.'
+        'environment variables to be set information from GCP.'
 
         if SpecConfig.instance.fle?
           fail(reason)

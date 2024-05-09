@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'lite_spec_helper'
 
@@ -20,7 +20,7 @@ RSpec.configure do |config|
   config.extend(Constraints)
 
   config.before(:all) do
-    if ClusterConfig.instance.fcv_ish >= '3.6' && !SpecConfig.instance.serverless? # Serverless instances do not support killAllSessions command.
+    if SpecConfig.instance.kill_all_server_sessions?
       kill_all_server_sessions
     end
   end

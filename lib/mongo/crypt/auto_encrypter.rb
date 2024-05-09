@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2019-2020 MongoDB Inc.
 #
@@ -91,6 +91,7 @@ module Mongo
       # @raise [ ArgumentError ] If required options are missing or incorrectly
       #   formatted.
       def initialize(options)
+        Crypt.validate_ffi!
         # Note that this call may eventually, via other method invocations,
         # create additional clients which have to be cleaned up.
         @options = set_default_options(options).freeze
@@ -117,12 +118,13 @@ module Mongo
           @crypt_handle.crypt_shared_lib_available? ||
           @options[:extra_options][:crypt_shared_lib_required]
 
-        if !@options[:extra_options][:crypt_shared_lib_required]
+        unless @options[:extra_options][:crypt_shared_lib_required] || @crypt_handle.crypt_shared_lib_available? || @options[:bypass_query_analysis]
           # Set server selection timeout to 1 to prevent the client waiting for a
           # long timeout before spawning mongocryptd
           @mongocryptd_client = Client.new(
             @options[:extra_options][:mongocryptd_uri],
             monitoring_io: @options[:client].options[:monitoring_io],
+            populator_io: @options[:client].options[:populator_io],
             server_selection_timeout: 10,
             database: @options[:client].options[:database]
           )
@@ -135,7 +137,7 @@ module Mongo
             key_vault_namespace: @options[:key_vault_namespace],
             key_vault_client: @key_vault_client,
             metadata_client: @metadata_client,
-            mongocryptd_options: @options[:extra_options]
+            mongocryptd_options: @mongocryptd_options
           )
         rescue
           begin

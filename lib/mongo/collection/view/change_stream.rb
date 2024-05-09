@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2017-2020 MongoDB Inc.
 #
@@ -164,7 +164,7 @@ module Mongo
             document = try_next
             yield document if document
           end
-        rescue StopIteration => e
+        rescue StopIteration
           return self
         end
 
@@ -238,7 +238,7 @@ module Mongo
           unless closed?
             begin
               @cursor.close
-            rescue Error::OperationFailure, Error::SocketError, Error::SocketTimeoutError
+            rescue Error::OperationFailure, Error::SocketError, Error::SocketTimeoutError, Error::MissingConnection
               # ignore
             end
             @cursor = nil

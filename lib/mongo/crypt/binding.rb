@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2019-2020 MongoDB Inc.
 #
@@ -83,7 +83,7 @@ module Mongo
       # will cause a `LoadError`.
       #
       # @api private
-      MIN_LIBMONGOCRYPT_VERSION = Gem::Version.new("1.5.2")
+      MIN_LIBMONGOCRYPT_VERSION = Gem::Version.new("1.7.0")
 
       # @!method self.mongocrypt_version(len)
       #   @api private
@@ -94,6 +94,32 @@ module Mongo
       #   @return [ String ] A version string for libmongocrypt.
       attach_function :mongocrypt_version, [:pointer], :string
 
+      # Given a string representing a version number, parses it into a
+      # Gem::Version object. This handles the case where the string is not
+      # in a format supported by Gem::Version by doing some custom parsing.
+      #
+      # @param [ String ] version String representing a version number.
+      #
+      # @return [ Gem::Version ] the version number
+      #
+      # @raise [ ArgumentError ] if the string cannot be parsed.
+      #
+      # @api private
+      def self.parse_version(version)
+        Gem::Version.new(version)
+      rescue ArgumentError
+        match = version.match(/\A(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)?(-[A-Za-z\+\d]+)?\z/)
+        raise ArgumentError.new("Malformed version number string #{version}") if match.nil?
+
+        Gem::Version.new(
+          [
+            match[:major],
+            match[:minor],
+            match[:patch]
+          ].join('.')
+        )
+      end
+
       # Validates if provided version of libmongocrypt is valid, i.e. equal or
       # greater than minimum required version. Raises a LoadError if not.
       #
@@ -103,25 +129,7 @@ module Mongo
       #
       # @api private
       def self.validate_version(lmc_version)
-        if (actual_version = Gem::Version.new(lmc_version)) < MIN_LIBMONGOCRYPT_VERSION
-          raise LoadError, "libmongocrypt version #{MIN_LIBMONGOCRYPT_VERSION} or above is required, " +
-            "but version #{actual_version} was found."
-        end
-      rescue ArgumentError => e
-        # Some lmc versions cannot be parsed with Gem::Version class,
-        # so we fall back to regex.
-        match = lmc_version.match(/\A(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)?(-[A-Za-z\+\d]+)?\z/)
-        if match.nil?
-          raise ArgumentError.new("Malformed version number string #{lmc_version}")
-        end
-        actual_version = Gem::Version.new(
-          [
-            match[:major],
-            match[:minor],
-            match[:patch]
-          ].join('.')
-        )
-        if actual_version < MIN_LIBMONGOCRYPT_VERSION
+        if (actual_version = parse_version(lmc_version)) < MIN_LIBMONGOCRYPT_VERSION
           raise LoadError, "libmongocrypt version #{MIN_LIBMONGOCRYPT_VERSION} or above is required, " +
             "but version #{actual_version} was found."
         end
@@ -717,6 +725,40 @@ module Mongo
         end
       end
 
+      # @!method self.mongocrypt_ctx_explicit_encrypt_init(ctx, msg)
+      #   @api private
+      #
+      #   Initializes the ctx for explicit expression encryption.
+      #   @param [ FFI::Pointer ] ctx A pointer to a mongocrypt_ctx_t object.
+      #   @param [ FFI::Pointer ] msg A pointer to a mongocrypt_binary_t object
+      #     that references the message to be encrypted as a binary string.
+      #   @note Before calling this method, set a key_id, key_alt_name (optional),
+      #     and encryption algorithm using the following methods:
+      #     mongocrypt_ctx_setopt_key_id, mongocrypt_ctx_setopt_key_alt_name,
+      #     and mongocrypt_ctx_setopt_algorithm.
+      #   @return [ Boolean ] Whether the initialization was successful.
+      attach_function(
+        :mongocrypt_ctx_explicit_encrypt_expression_init,
+        [:pointer, :pointer],
+        :bool
+      )
+
+      # Initialize the Context for explicit expression encryption.
+      #
+      # @param [ Mongo::Crypt::Context ] context
+      # @param [ Hash ] doc A BSON document to encrypt
+      #
+      # @raise [ Mongo::Error::CryptError ] If initialization fails
+      def self.ctx_explicit_encrypt_expression_init(context, doc)
+        validate_document(doc)
+        data = doc.to_bson.to_s
+        Binary.wrap_string(data) do |data_p|
+          check_ctx_status(context) do
+            mongocrypt_ctx_explicit_encrypt_expression_init(context.ctx_p, data_p)
+          end
+        end
+      end
+
       # @!method self.mongocrypt_ctx_decrypt_init(ctx, doc)
       #   @api private
       #
@@ -775,13 +817,14 @@ module Mongo
 
       # An enum labeling different libmognocrypt state machine states
       enum :mongocrypt_ctx_state, [
-        :error,               0,
-        :need_mongo_collinfo, 1,
-        :need_mongo_markings, 2,
-        :need_mongo_keys,     3,
-        :need_kms,            4,
-        :ready,               5,
-        :done,                6,
+        :error,                 0,
+        :need_mongo_collinfo,   1,
+        :need_mongo_markings,   2,
+        :need_mongo_keys,       3,
+        :need_kms,              4,
+        :ready,                 5,
+        :done,                  6,
+        :need_kms_credentials,  7,
       ]
 
       # @!method self.mongocrypt_ctx_state(ctx)
@@ -1463,19 +1506,129 @@ module Mongo
         end
       end
 
-      # MONGOCRYPT_EXPORT
-      # uint64_t
-      # mongocrypt_crypt_shared_lib_version (const mongocrypt_t *crypt);
+      # @!method self.mongocrypt_crypt_shared_lib_version(crypt)
+      #   @api private
+      #
+      # Obtain a 64-bit constant encoding the version of the loaded
+      # crypt_shared library, if available.
+      #
+      # The version is encoded as four 16-bit numbers, from high to low:
+      #
+      # - Major version
+      # - Minor version
+      # - Revision
+      # - Reserved
+      #
+      # For example, version 6.2.1 would be encoded as: 0x0006'0002'0001'0000
+      #
+      # @param [ FFI::Pointer ] crypt A pointer to a mongocrypt_t object.
+      #
+      # @return [int64] A 64-bit encoded version number, with the version encoded as four
+      #   sixteen-bit integers, or zero if no crypt_shared library was loaded.
       attach_function(
         :mongocrypt_crypt_shared_lib_version,
         [ :pointer ],
         :uint64
       )
 
+      # Obtain a 64-bit constant encoding the version of the loaded
+      # crypt_shared library, if available.
+      #
+      # The version is encoded as four 16-bit numbers, from high to low:
+      #
+      # - Major version
+      # - Minor version
+      # - Revision
+      # - Reserved
+      #
+      # For example, version 6.2.1 would be encoded as: 0x0006'0002'0001'0000
+      #
+      # @param [ Mongo::Crypt::Handle ] handle
+      #
+      # @return [ Integer ] A 64-bit encoded version number, with the version encoded as four
+      #   sixteen-bit integers, or zero if no crypt_shared library was loaded.
       def self.crypt_shared_lib_version(handle)
         mongocrypt_crypt_shared_lib_version(handle.ref)
       end
 
+      # @!method self.mongocrypt_setopt_use_need_kms_credentials_state(crypt)
+      #   @api private
+      #
+      # Opt-into handling the MONGOCRYPT_CTX_NEED_KMS_CREDENTIALS state.
+      #
+      # If set, before entering the MONGOCRYPT_CTX_NEED_KMS state,
+      # contexts may enter the MONGOCRYPT_CTX_NEED_KMS_CREDENTIALS state
+      # and then wait for credentials to be supplied through
+      # `mongocrypt_ctx_provide_kms_providers`.
+      #
+      # A context will only enter MONGOCRYPT_CTX_NEED_KMS_CREDENTIALS
+      # if an empty document was set for a KMS provider in
+      # `mongocrypt_setopt_kms_providers`.
+      #
+      # @param [ FFI::Pointer ] crypt A pointer to a mongocrypt_t object.
+      attach_function(
+        :mongocrypt_setopt_use_need_kms_credentials_state,
+        [ :pointer ],
+        :void
+      )
+
+      # Opt-into handling the MONGOCRYPT_CTX_NEED_KMS_CREDENTIALS state.
+      #
+      # If set, before entering the MONGOCRYPT_CTX_NEED_KMS state,
+      # contexts may enter the MONGOCRYPT_CTX_NEED_KMS_CREDENTIALS state
+      # and then wait for credentials to be supplied through
+      # `mongocrypt_ctx_provide_kms_providers`.
+      #
+      # A context will only enter MONGOCRYPT_CTX_NEED_KMS_CREDENTIALS
+      # if an empty document was set for a KMS provider in
+      # `mongocrypt_setopt_kms_providers`.
+      #
+      # @param [ Mongo::Crypt::Handle ] handle
+      def self.setopt_use_need_kms_credentials_state(handle)
+        mongocrypt_setopt_use_need_kms_credentials_state(handle.ref)
+      end
+
+      # @!method self.mongocrypt_ctx_provide_kms_providers(ctx, kms_providers)
+      #   @api private
+      #
+      # Call in response to the MONGOCRYPT_CTX_NEED_KMS_CREDENTIALS state
+      # to set per-context KMS provider settings. These follow the same format
+      # as `mongocrypt_setopt_kms_providers``. If no keys are present in the
+      # BSON input, the KMS provider settings configured for the mongocrypt_t
+      # at initialization are used.
+      #
+      # @param [ FFI::Pointer ] ctx A pointer to a mongocrypt_ctx_t object.
+      # @param [ FFI::Pointer ] kms_providers A pointer to a
+      #   mongocrypt_binary_t object that references a BSON document mapping
+      #   the KMS provider names to credentials.
+      #
+      # @returns [ true | false ] Returns whether the options was set successfully.
+      attach_function(
+        :mongocrypt_ctx_provide_kms_providers,
+        [ :pointer, :pointer ],
+        :bool
+      )
+
+      # Call in response to the MONGOCRYPT_CTX_NEED_KMS_CREDENTIALS state
+      # to set per-context KMS provider settings. These follow the same format
+      # as `mongocrypt_setopt_kms_providers``. If no keys are present in the
+      # BSON input, the KMS provider settings configured for the mongocrypt_t
+      # at initialization are used.
+      #
+      # @param [ Mongo::Crypt::Context ] context Encryption context.
+      # @param [ BSON::Document ] kms_providers BSON document mapping
+      #   the KMS provider names to credentials.
+      #
+      # @raise [ Mongo::Error::CryptError ] If the option is not set successfully.
+      def self.ctx_provide_kms_providers(context, kms_providers)
+        validate_document(kms_providers)
+        data = kms_providers.to_bson.to_s
+        Binary.wrap_string(data) do |data_p|
+          check_ctx_status(context) do
+            mongocrypt_ctx_provide_kms_providers(context.ctx_p, data_p)
+          end
+        end
+      end
 
       # @!method self.mongocrypt_ctx_setopt_query_type(ctx, mongocrypt_query_type)
       #   @api private
@@ -1540,6 +1693,47 @@ module Mongo
       def self.ctx_setopt_contention_factor(context, factor)
         check_ctx_status(context) do
           mongocrypt_ctx_setopt_contention_factor(context.ctx_p, factor)
+        end
+      end
+
+      # @!method self.mongocrypt_ctx_setopt_algorithm_range(ctx, opts)
+      #   @api private
+      #
+      # Set options for explicit encryption with the "rangePreview" algorithm.
+      #
+      # @note The RangePreview algorithm is experimental only. It is not intended for
+      # public use.
+      #
+      # @param [ FFI::Pointer ] ctx A pointer to a mongocrypt_ctx_t object.
+      # @param [ FFI::Pointer ] opts opts A pointer to range
+      #   options document.
+      #
+      # @return [ Boolean ] Whether setting this option succeeded.
+      attach_function(
+        :mongocrypt_ctx_setopt_algorithm_range,
+        [
+          :pointer,
+          :pointer
+        ],
+        :bool
+      )
+
+      # Set options for explicit encryption with the "rangePreview" algorithm.
+      #
+      # @note The RangePreview algorithm is experimental only. It is not intended for
+      # public use.
+      #
+      # @param [ Mongo::Crypt::Context ] context
+      # @param [ Hash ] opts options
+      #
+      # @raise [ Mongo::Error::CryptError ] If the operation failed
+      def self.ctx_setopt_algorithm_range(context, opts)
+        validate_document(opts)
+        data = opts.to_bson.to_s
+        Binary.wrap_string(data) do |data_p|
+          check_ctx_status(context) do
+            mongocrypt_ctx_setopt_algorithm_range(context.ctx_p, data_p)
+          end
         end
       end
 

@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -197,11 +197,7 @@ module Mongo
           op.execute(server, context: Operation::Context.new(options: options))
 
           if session = kill_spec.session
-            if session.ended?
-              if Lint.enabled?
-                raise Error::LintError, "Ended session for a garbage collected cursor"
-              end
-            elsif session.implicit?
+            if session.implicit?
               session.end_session
             end
           end

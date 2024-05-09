@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2019-2021 MongoDB Inc.
 #
@@ -18,6 +18,12 @@
 module Mongo
   module Crypt
     module KMS
+      # This error indicates that we could not obtain credential for
+      # a KMS service.
+      #
+      # @api private
+      class CredentialsNotFound < RuntimeError; end
+
       # This module contains helper methods for validating KMS parameters.
       #
       # @api private

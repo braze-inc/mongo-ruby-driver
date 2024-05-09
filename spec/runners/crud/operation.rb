@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -32,7 +32,7 @@ module Mongo
         @spec = IceNine.deep_freeze(spec)
         @name = spec['name']
         if spec['arguments']
-          @arguments = BSON::ExtJSON.parse_obj(spec['arguments'])
+          @arguments = BSON::ExtJSON.parse_obj(spec['arguments'], mode: :bson)
         else
           @arguments = {}
         end

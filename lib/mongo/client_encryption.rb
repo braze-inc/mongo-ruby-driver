@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2019-2020 MongoDB Inc.
 #
@@ -120,6 +120,46 @@ module Mongo
       @encrypter.encrypt(value, options)
     end
 
+    # Encrypts a Match Expression or Aggregate Expression to query a range index.
+    #
+    # @example Encrypt Match Expression.
+    #   encryption.encrypt_expression(
+    #     {'$and' =>  [{'field' => {'$gt' => 10}}, {'field' =>  {'$lt' => 20 }}]}
+    #   )
+    # @example Encrypt Aggregate Expression.
+    #   encryption.encrypt_expression(
+    #     {'$and' =>  [{'$gt' => ['$field', 10]}, {'$lt' => ['$field', 20]}}
+    #   )
+    #   {$and: [{$gt: [<fieldpath>, <value1>]}, {$lt: [<fieldpath>, <value2>]}]
+    # Only supported when queryType is "rangePreview" and algorithm is "RangePreview".
+    # @note: The Range algorithm is experimental only. It is not intended
+    #   for public use. It is subject to breaking changes.
+    #
+    # @param [ Hash ] expression Expression to encrypt.
+    # # @param [ Hash ] options
+    # @option options [ BSON::Binary ] :key_id A BSON::Binary object of type :uuid
+    #   representing the UUID of the encryption key as it is stored in the key
+    #   vault collection.
+    # @option options [ String ] :key_alt_name The alternate name for the
+    #   encryption key.
+    # @option options [ String ] :algorithm The algorithm used to encrypt the
+    #   expression. The only allowed value is "RangePreview"
+    # @option options [ Integer | nil ] :contention_factor Contention factor
+    #   to be applied If not  provided, it defaults to a value of 0.
+    # @option options [ String | nil ] query_type Query type to be applied.
+    #   The only allowed value is "rangePreview".
+    #
+    # @note The :key_id and :key_alt_name options are mutually exclusive. Only
+    #   one is required to perform explicit encryption.
+    #
+    # @return [ BSON::Binary ] A BSON Binary object of subtype 6 (ciphertext)
+    #   representing the encrypted expression.
+    #
+    # @raise [ ArgumentError ] if disallowed values in options are set.
+    def encrypt_expression(expression, options = {})
+      @encrypter.encrypt_expression(expression, options)
+    end
+
     # Decrypts a value that has already been encrypted.
     #
     # @param [ BSON::Binary ] value A BSON Binary object of subtype 6 (ciphertext)
@@ -205,5 +245,66 @@ module Mongo
       @encrypter.rewrap_many_data_key(filter, opts)
     end
 
+    # Create collection with encrypted fields.
+    #
+    # If :encryption_fields contains a keyId with a null value, a data key
+    # will be automatically generated and assigned to keyId value.
+    #
+    # @note This method does not update the :encrypted_fields_map in the client's
+    #   :auto_encryption_options. Therefore, in order to use the collection
+    #   created by this method with automatic encryption, the user must create
+    #   a new client after calling this function with the :encrypted_fields returned.
+    #
+    # @param [ Mongo::Database ] database Database to create collection in.
+    # @param [ String ] coll_name Name of collection to create.
+    # @param [ Hash ] coll_opts Options for collection to create.
+    # @param [ String ] kms_provider KMS provider to encrypt fields.
+    # @param [ Hash | nil ] master_key Document describing master key to encrypt fields.
+    #
+    # @return [ Array<Operation::Result, Hash> ] The result of the create
+    #   collection operation and the encrypted fields map used to create
+    #   the collection.
+    def create_encrypted_collection(database, coll_name, coll_opts, kms_provider, master_key)
+      raise ArgumentError, 'coll_opts must contain :encrypted_fields' unless coll_opts[:encrypted_fields]
+
+      encrypted_fields = create_data_keys(coll_opts[:encrypted_fields], kms_provider, master_key)
+      begin
+        new_coll_opts = coll_opts.dup.merge(encrypted_fields: encrypted_fields)
+        [database[coll_name].create(new_coll_opts), encrypted_fields]
+      rescue Mongo::Error => e
+        raise Error::CryptError, "Error creating collection with encrypted fields \
+              #{encrypted_fields}: #{e.class}: #{e.message}"
+      end
+    end
+
+    private
+
+    # Create data keys for fields in encrypted_fields that has :keyId key,
+    # but the value is nil.
+    #
+    # @param [ Hash ] encrypted_fields Encrypted fields map.
+    # @param [ String ] kms_provider KMS provider to encrypt fields.
+    # @param [ Hash | nil ] master_key Document describing master key to encrypt fields.
+    #
+    # @return [ Hash ] Encrypted fields map with keyIds for fields
+    #   that did not have one.
+    def create_data_keys(encrypted_fields, kms_provider, master_key)
+      encrypted_fields = encrypted_fields.dup
+      # We must return the partially formed encrypted_fields hash if an error
+      # occurs - https://github.com/mongodb/specifications/blob/master/source/client-side-encryption/client-side-encryption.rst#create-encrypted-collection-helper
+      # Thefore, we do this in a loop instead of using #map.
+      encrypted_fields[:fields].size.times do |i|
+        field = encrypted_fields[:fields][i]
+        next unless field.is_a?(Hash) && field.fetch(:keyId, false).nil?
+
+        begin
+          encrypted_fields[:fields][i][:keyId] = create_data_key(kms_provider, master_key: master_key)
+        rescue Error::CryptError => e
+          raise Error::CryptError, "Error creating data key for field #{field[:path]} \
+              with encrypted fields #{encrypted_fields}: #{e.class}: #{e.message}"
+        end
+      end
+      encrypted_fields
+    end
   end
 end

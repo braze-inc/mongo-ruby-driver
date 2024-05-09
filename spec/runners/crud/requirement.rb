@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 module Mongo
   module CRUD
@@ -109,9 +109,9 @@ module Mongo
           end
         end
         if @auth == true
-          ok &&= cc.auth_enabled?
+          ok &&= SpecConfig.instance.auth?
         elsif @auth == false
-          ok &&= !cc.auth_enabled?
+          ok &&= !SpecConfig.instance.auth?
         end
         if @csfle
           ok &&= !!(ENV['LIBMONGOCRYPT_PATH'] || ENV['FLE'])

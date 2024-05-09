@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -651,7 +651,11 @@ describe Mongo::Collection do
       end
 
       let(:collstats) do
-        database.read_command(:collstats => :specs).documents.first
+        collection.aggregate([ {'$collStats' => { 'storageStats' => {} }} ]).first
+      end
+
+      let(:storage_stats) do
+        collstats.fetch('storageStats', {})
       end
 
       before do
@@ -664,9 +668,9 @@ describe Mongo::Collection do
       end
 
       it "applies the options" do
-        expect(collstats["capped"]).to be true
-        expect(collstats["max"]).to eq(512)
-        expect(collstats["maxSize"]).to eq(4096)
+        expect(storage_stats["capped"]).to be true
+        expect(storage_stats["max"]).to eq(512)
+        expect(storage_stats["maxSize"]).to eq(4096)
       end
     end
 
@@ -834,9 +838,9 @@ describe Mongo::Collection do
         end
 
         it "waits the appropriate amount of time" do
-          start_time = Time.now
+          start_time = Mongo::Utils.monotonic_time
           enum.try_next
-          end_time = Time.now
+          end_time = Mongo::Utils.monotonic_time
 
           expect(end_time-start_time).to be >= 3
         end

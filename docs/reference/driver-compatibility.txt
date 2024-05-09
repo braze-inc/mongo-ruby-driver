@@ -28,6 +28,13 @@ particular version of the driver will generally work with newer versions of
 the server but may not take advantage of the functionality released in the
 newer version of the server.
 
+.. important::
+
+   MongoDB ensures compatibility between the MongoDB Server and the drivers
+   for three years after the server version's end of life (EOL) date. To learn
+   more about the MongoDB release and EOL dates, see
+   `MongoDB Software Lifecycle Schedules <https://www.mongodb.com/support-policy/lifecycles>`__.
+
 The first column lists the driver versions.“D” in other columns means support
 for that MongoDB version is deprecated and will be removed in a future driver
 version.
@@ -38,6 +45,7 @@ version.
    :class: compatibility-large no-padding
 
    * - Ruby Driver
+     - MongoDB 7.0
      - MongoDB 6.0
      - MongoDB 5.0
      - MongoDB 4.4
@@ -49,7 +57,34 @@ version.
      - MongoDB 3.0
      - MongoDB 2.6
 
+   * - 2.20
+     - |checkmark|
+     - |checkmark|
+     - |checkmark|
+     - |checkmark|
+     - |checkmark|
+     - |checkmark|
+     - |checkmark|
+     -
+     -
+     -
+     -
+
+   * - 2.19
+     - |checkmark|
+     - |checkmark|
+     - |checkmark|
+     - |checkmark|
+     - |checkmark|
+     - |checkmark|
+     - |checkmark|
+     -
+     -
+     -
+     -
+
    * - 2.18
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
@@ -63,6 +98,7 @@ version.
 
    * - 2.17
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
@@ -74,6 +110,7 @@ version.
      -
 
    * - 2.16
+     -
      -
      - |checkmark|
      - |checkmark|
@@ -88,6 +125,7 @@ version.
    * - 2.15
      -
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
@@ -100,6 +138,7 @@ version.
    * - 2.14
      -
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
@@ -110,6 +149,7 @@ version.
      - |checkmark|
 
    * - 2.13
+     -
      -
      -
      - |checkmark| [#ocsp]_
@@ -125,6 +165,7 @@ version.
      -
      -
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
@@ -137,6 +178,7 @@ version.
      -
      -
      -
+     -
      - |checkmark| [#client-side-encryption]_
      - |checkmark|
      - |checkmark|
@@ -146,6 +188,7 @@ version.
      - |checkmark|
 
    * - 2.10
+     -
      -
      -
      -
@@ -162,6 +205,7 @@ version.
      -
      -
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
@@ -170,6 +214,7 @@ version.
      - |checkmark|
 
    * - 2.8
+     -
      -
      -
      -
@@ -186,6 +231,7 @@ version.
      -
      -
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
@@ -198,6 +244,7 @@ version.
      -
      -
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
@@ -206,6 +253,7 @@ version.
      - |checkmark|
 
    * - 2.5
+     -
      -
      -
      -
@@ -245,6 +293,7 @@ for that Ruby version is deprecated.
    :class: compatibility-large no-padding
 
    * - Ruby Driver
+     - Ruby 3.2
      - Ruby 3.1
      - Ruby 3.0
      - Ruby 2.7
@@ -256,9 +305,46 @@ for that Ruby version is deprecated.
      - Ruby 2.1
      - Ruby 2.0
      - Ruby 1.9
+     - JRuby 9.4
      - JRuby 9.3
      - JRuby 9.2
      - JRuby 9.1
+
+   * - 2.20
+     - |checkmark|
+     - |checkmark|
+     - |checkmark|
+     - D
+     -
+     -
+     -
+     -
+     -
+     -
+     -
+     -
+     - |checkmark|
+     - |checkmark|
+     - D
+     -
+
+   * - 2.19
+     - |checkmark|
+     - |checkmark|
+     - |checkmark|
+     - |checkmark|
+     - D
+     - D
+     -
+     -
+     -
+     -
+     -
+     -
+     -
+     - |checkmark|
+     - |checkmark|
+     -
 
    * - 2.18
      - |checkmark|
@@ -266,6 +352,8 @@ for that Ruby version is deprecated.
      - |checkmark|
      - |checkmark|
      - |checkmark|
+     - |checkmark|
+     -
      -
      -
      -
@@ -277,11 +365,13 @@ for that Ruby version is deprecated.
      -
 
    * - 2.17
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
      - |checkmark|
      - |checkmark|
+     -
      -
      -
      -
@@ -294,11 +384,13 @@ for that Ruby version is deprecated.
 
    * - 2.16
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
      - |checkmark|
      - D
+     -
      -
      -
      -
@@ -310,12 +402,14 @@ for that Ruby version is deprecated.
 
    * - 2.15
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
      - |checkmark|
      - D
      - D
+     -
      -
      -
      -
@@ -327,11 +421,13 @@ for that Ruby version is deprecated.
    * - 2.14
      -
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
      - D
      - D
+     -
      -
      -
      -
@@ -343,11 +439,13 @@ for that Ruby version is deprecated.
    * - 2.13
      -
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
      - |checkmark|
      - |checkmark|
+     -
      -
      -
      -
@@ -359,11 +457,13 @@ for that Ruby version is deprecated.
    * - 2.12
      -
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
      - |checkmark|
      - |checkmark|
+     -
      -
      -
      -
@@ -375,11 +475,13 @@ for that Ruby version is deprecated.
    * - 2.11
      -
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
      - |checkmark|
      - |checkmark|
+     -
      -
      -
      -
@@ -391,6 +493,7 @@ for that Ruby version is deprecated.
    * - 2.10
      -
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
@@ -400,6 +503,7 @@ for that Ruby version is deprecated.
      - D
      - D
      - D
+     -
      -
      - |checkmark|
      - |checkmark|
@@ -408,6 +512,7 @@ for that Ruby version is deprecated.
      -
      -
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
@@ -416,6 +521,7 @@ for that Ruby version is deprecated.
      - D
      - D
      - D
+     -
      -
      - |checkmark|
      - |checkmark|
@@ -424,6 +530,7 @@ for that Ruby version is deprecated.
      -
      -
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
@@ -432,6 +539,7 @@ for that Ruby version is deprecated.
      - |checkmark|
      - |checkmark|
      - |checkmark|
+     -
      -
      - |checkmark|
      - |checkmark|
@@ -440,6 +548,7 @@ for that Ruby version is deprecated.
      -
      -
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
@@ -448,6 +557,7 @@ for that Ruby version is deprecated.
      - |checkmark|
      - |checkmark|
      - |checkmark|
+     -
      -
      - |checkmark|
      - |checkmark|
@@ -456,6 +566,7 @@ for that Ruby version is deprecated.
      -
      -
      -
+     -
      - |checkmark|
      - |checkmark|
      - |checkmark|
@@ -464,6 +575,7 @@ for that Ruby version is deprecated.
      - |checkmark|
      - |checkmark|
      - |checkmark|
+     -
      -
      - |checkmark|
      - |checkmark|
@@ -561,7 +673,7 @@ the driver.
    * - Ruby Driver
      - mongo_kerberos |nbsp| 2.1
 
-   * - 2.7 - 2.18
+   * - 2.7 - 2.19
      - |checkmark|
 
 

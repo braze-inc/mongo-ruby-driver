@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -39,14 +39,23 @@ describe Mongo::Cursor do
         # Deal with this by pre-creating pools for all known servers.
         cluster = authorized_collection.client.cluster
         cluster.next_primary
-        cluster.servers_list.each do |server|
-          server.pool
+        cluster.servers.each do |server|
+          reset_pool(server)
+        end
+      end
+
+      after do
+        authorized_client.cluster.servers.each do |server|
+          if pool = server.pool_internal
+            pool.close
+          end
         end
       end
     end
 
     context 'cursor exhausted by initial result' do
       include_context 'with initialized pool'
+      require_no_linting
 
       let(:view) do
         Mongo::Collection::View.new(authorized_collection)
@@ -64,6 +73,7 @@ describe Mongo::Cursor do
 
     context 'cursor not exhausted by initial result' do
       include_context 'with initialized pool'
+      require_no_linting
 
       let(:view) do
         Mongo::Collection::View.new(authorized_collection, {}, batch_size: 2)
@@ -84,7 +94,7 @@ describe Mongo::Cursor do
 
       let(:server) do
         view.send(:server_selector).select_server(authorized_client.cluster).tap do |server|
-          authorized_client.cluster.disconnect!
+          authorized_client.cluster.close
           server.unknown!
         end
       end
@@ -93,8 +103,10 @@ describe Mongo::Cursor do
         Mongo::Collection::View.new(authorized_collection)
       end
 
-      it 'works' do
-        cursor
+      it 'raises ServerNotUsable' do
+        lambda do
+          cursor
+        end.should raise_error(Mongo::Error::ServerNotUsable)
       end
     end
   end
@@ -697,7 +709,11 @@ describe Mongo::Cursor do
 
   describe '#close' do
     let(:view) do
-      Mongo::Collection::View.new(authorized_collection)
+      Mongo::Collection::View.new(
+        authorized_collection,
+        {},
+        batch_size: 2,
+      )
     end
 
     let(:server) do
@@ -712,25 +728,56 @@ describe Mongo::Cursor do
       described_class.new(view, reply, server)
     end
 
+    let(:documents) do
+      (1..10).map{ |i| { field: "test#{i}" }}
+    end
+
+    before do
+      authorized_collection.drop
+      authorized_collection.insert_many(documents)
+    end
+
     it 'closes' do
+      expect(cursor).not_to be_closed
       cursor.close
       expect(cursor).to be_closed
     end
 
+    context 'when closed from another thread' do
+      it 'raises an error' do
+        Thread.new do
+          cursor.close
+        end
+        sleep(1)
+        expect(cursor).to be_closed
+        expect do
+          cursor.to_a
+        end.to raise_error Mongo::Error::InvalidCursorOperation
+      end
+    end
+
     context 'when there is a socket error during close' do
       clean_slate
+      require_no_linting
 
       before do
-        server.with_connection do |conn|
-          expect(conn).to receive(:deliver)
-            .and_raise(Mongo::Error::SocketError, "test error")
-        end
+        reset_pool(server)
       end
 
-      it 'raises an error' do
+      after do
+        server.pool.close
+      end
+
+      it 'does not raise an error' do
+        cursor
+        server.with_connection do |conn|
+          expect(conn).to receive(:deliver)
+            .at_least(:once)
+            .and_raise(Mongo::Error::SocketError, "test error")
+        end
         expect do
           cursor.close
-        end.to raise_error(Mongo::Error::SocketError, "test error")
+        end.not_to raise_error
       end
     end
   end

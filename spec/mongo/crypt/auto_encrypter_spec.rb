@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 require 'tempfile'
@@ -155,6 +155,13 @@ describe Mongo::Crypt::AutoEncrypter do
       it 'creates new client for key_vault_client and metadata_client' do
         expect(auto_encrypter.key_vault_client).not_to eq(client)
         expect(auto_encrypter.metadata_client).not_to eq(client)
+      end
+    end
+
+    context 'when crypt shared library is available' do
+      it 'does not create a mongocryptd client' do
+        allow_any_instance_of(Mongo::Crypt::Handle).to receive(:"crypt_shared_lib_available?").and_return true
+        expect(auto_encrypter.mongocryptd_client).to be_nil
       end
     end
   end

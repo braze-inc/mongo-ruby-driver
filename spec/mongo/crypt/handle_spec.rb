@@ -1,9 +1,9 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'mongo'
 require 'base64'
-require 'lite_spec_helper'
+require 'spec_helper'
 
 describe Mongo::Crypt::Handle do
   require_libmongocrypt
@@ -156,7 +156,7 @@ describe Mongo::Crypt::Handle do
         end
 
         it 'does not load the crypt shared lib' do
-          expect_any_instance_of(Binding).not_to receive(:setopt_append_crypt_shared_lib_search_path)
+          expect(Mongo::Crypt::Binding).not_to receive(:setopt_append_crypt_shared_lib_search_path)
 
           expect(handle.crypt_shared_lib_version).to eq(0)
         end
@@ -170,7 +170,7 @@ describe Mongo::Crypt::Handle do
         end
 
         it 'does not load the crypt shared lib' do
-          expect_any_instance_of(Binding).not_to receive(:setopt_append_crypt_shared_lib_search_path)
+          expect(Mongo::Crypt::Binding).not_to receive(:setopt_append_crypt_shared_lib_search_path)
 
           expect(handle.crypt_shared_lib_version).to eq(0)
         end
@@ -203,6 +203,21 @@ describe Mongo::Crypt::Handle do
       context 'with valid AWS kms_providers' do
         include_context 'with AWS kms_providers'
         it_behaves_like 'a functioning Mongo::Crypt::Handle'
+      end
+
+      context 'with empty AWS kms_providers' do
+        let(:kms_providers) do
+          {
+            aws: {}
+          }
+        end
+
+        it 'instructs libmongocrypt to handle empty AWS credentials' do
+          expect(Mongo::Crypt::Binding).to receive(
+            :setopt_use_need_kms_credentials_state
+          ).once.and_call_original
+          handle
+        end
       end
     end
 

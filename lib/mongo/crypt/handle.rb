@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2019-2020 MongoDB Inc.
 #
@@ -27,6 +27,9 @@ module Mongo
     #
     # @api private
     class Handle
+
+      # @returns [ Crypt::KMS::Credentials ] Credentials for KMS providers.
+      attr_reader :kms_providers
 
       # Creates a new Handle object and initializes it with options
       #
@@ -69,6 +72,7 @@ module Mongo
           Binding.method(:mongocrypt_destroy)
         )
 
+        @kms_providers = kms_providers
         @kms_tls_options =  kms_tls_options
 
         maybe_set_schema_map(options)
@@ -92,7 +96,11 @@ module Mongo
 
         set_crypto_hooks
 
-        Binding.setopt_kms_providers(self, kms_providers.to_document)
+        Binding.setopt_kms_providers(self, @kms_providers.to_document)
+
+        if @kms_providers.aws&.empty? || @kms_providers.gcp&.empty? || @kms_providers.azure&.empty?
+          Binding.setopt_use_need_kms_credentials_state(self)
+        end
 
         initialize_mongocrypt
 

@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -272,19 +272,18 @@ module Mongo
               cmd = { count: collection.name }
               cmd[:maxTimeMS] = opts[:max_time_ms] if opts[:max_time_ms]
               if read_concern
-                cmd[:readConcern] = Options::Mapper.transform_values_to_strings(
-                  read_concern)
-                end
-                result = Operation::Count.new(
-                  selector: cmd,
-                  db_name: database.name,
-                  read: read_pref,
-                  session: session,
-                  comment: opts[:comment],
-                ).execute(server, context: context)
-                result.n.to_i
+                cmd[:readConcern] = Options::Mapper.transform_values_to_strings(read_concern)
               end
+              result = Operation::Count.new(
+                selector: cmd,
+                db_name: database.name,
+                read: read_pref,
+                session: session,
+                comment: opts[:comment],
+              ).execute(server, context: context)
+              result.n.to_i
             end
+          end
         rescue Error::OperationFailure => exc
           if exc.code == 26
             # NamespaceNotFound

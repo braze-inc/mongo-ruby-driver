@@ -18,6 +18,59 @@ for the complete list of changes, including those internal to the driver and
 its test suite.
 
 
+.. _release-notes-2.20:
+
+2.20
+====
+
+This release includes the following new features:
+
+- Support for Ruby 2.5 and 2.6 has been discontinued. Support for Ruby 2.7 and
+  JRuby 9.2 has been deprecated, and will be discontinued in the next minor
+  driver version. Support for JRuby 9.4 has been added.
+- Support for the newly-released Ruby-BSON version 5.0.
+- Connection strings no longer require a slash between the hosts and the
+  options. E.g., "mongodb://example.com?w=1" and "mongodb://example.com/?w=1"
+  are both valid connection strings now.
+- Container runtime and orchestration metadata for the client environment are
+  now sent to the server for analytics purposes.
+- A warning message is now written to the log when the host is detected to be
+  a CosmosDB (Azure) or DocumentDB (Amazon) instance.
+- When attempting a retry of a read or write operation in a sharded topology,
+  the retry will be attempted on a different mongos instance, if possible.
+
+
+.. _release-notes-2.19:
+
+2.19
+====
+
+This release of the Ruby driver supports MongoDB version 7.0. The Ruby driver
+now supports Ruby 3.2. Ruby 2.5 and 2.6 are now deprecated.
+
+This release includes the following new features:
+
+- The driver now limits the number of connections established by a connection
+  pool simultaneously. By default the limit is 2. The limit can be configured
+  with the ``:max_connecting`` option of the ``Mongo::Client`` constructor.
+  The default should be sufficient for most applications. However, if your
+  application is using a large number of threads, you may need to increase
+  the limit.
+- Added support for automatic AWS credentials retrieval and authentication
+  with temporary credentials when AWS KMS is used for client side encryption.
+- Added support for automatic GCP credentials retrieval when Google Cloud Key
+  Management is used for client side encryption.
+- Added support the Azure VM-assigned Managed Identity for Automatic KMS Credentials
+  when Azure Key Vault is used for client side encryption.
+- `Queryable Encryption <https://www.mongodb.com/docs/upcoming/core/queryable-encryption/queryable-encryption/>`_ support is extended.
+- Added support for Queryable Encryption Range Indexes.
+- A `crypt_shared <https://www.mongodb.com/docs/manual/core/queryable-encryption/reference/shared-library/#download-the-automatic-encryption-shared-library>`_
+  library can be now used instead of ``mongocryptd``.
+- Added support for AWS IAM Roles for service accounts, EKS in particular.
+- AWS Credentials are now cached when possible.
+- Added support for creating and managing `Atlas search indexes <https://www.mongodb.com/docs/atlas/atlas-search/>`_ via the
+  Ruby driver.
+
 .. _release-notes-2.18:
 
 2.18
@@ -51,13 +104,13 @@ This release includes the following new features:
   specify an arbitrary comment to help trace the operation through the
   database profiler, currentOp and logs.
 - The ``estimated_document_count`` method is now using the ``count`` server
-  command instead of `$collStats`` aggregation pipeline stage, to support
+  command instead of ``$collStats`` aggregation pipeline stage, to support
   operation on views. Applications using the Stable API should upgrade to
   server versions 5.0.8 (if using MongoDB 5.0) or 5.3.2 (if using MongoDB
   5.1/5.2/5.3) or newer to use the ``count`` command when API strict is enabled,
   or avoid setting ``api_strict: true`` when constructing ``Mongo::Client``
   instances with server versions 5.0.0-5.0.7 and 5.1.0-5.3.1.
-- The DBRef class has been moved to bson-ruby. For backwards compatibility,
+- The DBRef class has been moved to ``bson-ruby``. For backwards compatibility,
   ``BSON::DBRef`` is aliased as ``Mongo::DBRef``. The ``BSON::DBRef`` class
   derives from ``BSON::Document``, unlike the legacy ``Mongo::DBRef`` which
   derived from ``Object``. ``BSON::DBRef`` retains all attributes passed into

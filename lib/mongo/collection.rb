@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -173,7 +173,11 @@ module Mongo
       @options.freeze
     end
 
-    # Get the read concern for this collection instance.
+    # Get the effective read concern for this collection instance.
+    #
+    # If a read concern was provided in collection options, that read concern
+    # will be returned, otherwise the database's effective read concern will
+    # be returned.
     #
     # @example Get the read concern.
     #   collection.read_concern
@@ -185,7 +189,7 @@ module Mongo
       options[:read_concern] || database.read_concern
     end
 
-    # Get the server selector on this collection.
+    # Get the server selector for this collection.
     #
     # @example Get the server selector.
     #   collection.server_selector
@@ -197,7 +201,11 @@ module Mongo
       @server_selector ||= ServerSelector.get(read_preference || database.server_selector)
     end
 
-    # Get the read preference on this collection.
+    # Get the effective read preference for this collection.
+    #
+    # If a read preference was provided in collection options, that read
+    # preference will be returned, otherwise the database's effective read
+    # preference will be returned.
     #
     # @example Get the read preference.
     #   collection.read_preference
@@ -209,7 +217,11 @@ module Mongo
       @read_preference ||= options[:read] || database.read_preference
     end
 
-    # Get the write concern on this collection.
+    # Get the effective write concern on this collection.
+    #
+    # If a write concern was provided in collection options, that write
+    # concern will be returned, otherwise the database's effective write
+    # concern will be returned.
     #
     # @example Get the write concern.
     #   collection.write_concern
@@ -222,7 +234,8 @@ module Mongo
         options[:write_concern] || options[:write] || database.write_concern)
     end
 
-    # Get the write concern for the collection, given the session.
+    # Get the write concern to use for an operation on this collection,
+    # given a session.
     #
     # If the session is in a transaction and the collection
     # has an unacknowledged write concern, remove the write
@@ -301,7 +314,9 @@ module Mongo
     #
     # @since 2.0.0
     def capped?
-      database.read_command(:collstats => name).documents[0][CAPPED]
+      database.list_collections(filter: { name: name })
+        .first
+        &.dig('options', CAPPED) || false
     end
 
     # Force the collection to be created in the database.
@@ -324,7 +339,9 @@ module Mongo
     #     inserted or updated documents where the clustered index key value
     #     matches an existing value in the index.
     #   - *:name* -- Optional. A name that uniquely identifies the clustered index.
-    # @option opts [ Hash ] :collation The collation to use.
+    # @option opts [ Hash ] :collation The collation to use when creating the
+    #   collection. This option will not be sent to the server when calling
+    #   collection methods.
     # @option opts [ Hash ] :encrypted_fields Hash describing encrypted fields
     #   for queryable encryption.
     # @option opts [ Integer ] :expire_after Number indicating
@@ -359,13 +376,15 @@ module Mongo
     # @since 2.0.0
     def create(opts = {})
       # Passing read options to create command causes it to break.
-      # Filter the read options out.
+      # Filter the read options out. Session is also excluded here as it gets
+      # used by the call to with_session and should not be part of the
+      # operation. If it gets passed to the operation it would fail BSON
+      # serialization.
       # TODO put the list of read options in a class-level constant when
       # we figure out what the full set of them is.
-      options = Hash[self.options.reject do |key, value|
-        %w(read read_preference read_concern).include?(key.to_s)
+      options = Hash[self.options.merge(opts).reject do |key, value|
+        %w(read read_preference read_concern session).include?(key.to_s)
       end]
-      options.update(opts.slice(*CREATE_COLLECTION_OPTIONS.keys))
       # Converting Ruby options to server style.
       CREATE_COLLECTION_OPTIONS.each do |ruby_key, server_key|
         if options.key?(ruby_key)
@@ -515,7 +534,7 @@ module Mongo
     #   cursor and this option is therefore not valid.
     # @option options [ Session ] :session The session to use.
     #
-    # @return [ Aggregation ] The aggregation object.
+    # @return [ View::Aggregation ] The aggregation object.
     #
     # @since 2.1.0
     def aggregate(pipeline, options = {})
@@ -708,11 +727,33 @@ module Mongo
     #
     # @option options [ Session ] :session The session to use.
     #
-    # @return [ View::Index ] The index view.
+    # @return [ Index::View ] The index view.
     #
     # @since 2.0.0
     def indexes(options = {})
       Index::View.new(self, options)
+    end
+
+    # Get a view of all search indexes for this collection. Can be iterated or
+    # operated on directly. If id or name are given, the iterator will return
+    # only the indicated index. For all other operations, id and name are
+    # ignored.
+    #
+    # @note Only one of id or name may be given; it is an error to specify both,
+    #   although both may be omitted safely.
+    #
+    # @param [ Hash ] options The options to use to configure the view.
+    #
+    # @option options [ String ] :id The id of the specific index to query (optional)
+    # @option options [ String ] :name The name of the specific index to query (optional)
+    # @option options [ Hash ] :aggregate The options hash to pass to the
+    #    aggregate command (optional)
+    #
+    # @return [ SearchIndex::View ] The search index view.
+    #
+    # @since 2.0.0
+    def search_indexes(options = {})
+      SearchIndex::View.new(self, options)
     end
 
     # Get a pretty printed string inspection for the collection.
@@ -749,7 +790,7 @@ module Mongo
     def insert_one(document, opts = {})
       QueryCache.clear_namespace(namespace)
 
-      client.send(:with_session, opts) do |session|
+      client.with_session(opts) do |session|
         write_concern = if opts[:write_concern]
           WriteConcern.get(opts[:write_concern])
         else

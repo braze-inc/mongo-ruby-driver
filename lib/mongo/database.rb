@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -397,7 +397,7 @@ module Mongo
     #   cursor and this option is therefore not valid.
     # @option options [ Session ] :session The session to use.
     #
-    # @return [ Aggregation ] The aggregation object.
+    # @return [ Collection::View::Aggregation ] The aggregation object.
     #
     # @since 2.10.0
     def aggregate(pipeline, options = {})

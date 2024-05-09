@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'mongo'
 require 'lite_spec_helper'
@@ -287,6 +287,22 @@ describe Mongo::Crypt::KMS::Credentials do
             Base64.decode64(SpecConfig.instance.fle_gcp_private_key)
           )
         end
+      end
+    end
+
+    context 'with access token' do
+      let(:kms_provider) do
+        {
+          access_token: 'access_token'
+        }
+      end
+
+      it 'returns valid libmongocrypt credentials' do
+        expect(params.to_document).to eq(
+          BSON::Document.new({
+            accessToken: 'access_token'
+          })
+        )
       end
     end
   end

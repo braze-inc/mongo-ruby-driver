@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'mongo'
 require 'lite_spec_helper'
@@ -139,7 +139,7 @@ describe Mongo::Crypt::ExplicitEncryptionContext do
               value,
               options.merge(query_type: "equality")
             )
-          end.to raise_error(ArgumentError, /query_type is allowed only for "Indexed" algorithm/)
+          end.to raise_error(ArgumentError, /query_type is allowed only for "Indexed" or "RangePreview" algorithm/)
         end
       end
 
@@ -154,7 +154,7 @@ describe Mongo::Crypt::ExplicitEncryptionContext do
               value,
               options.merge(contention_factor: 10)
             )
-          end.to raise_error(ArgumentError, /contention_factor is allowed only for "Indexed" algorithm/)
+          end.to raise_error(ArgumentError, /contention_factor is allowed only for "Indexed" or "RangePreview" algorithm/)
         end
       end
 

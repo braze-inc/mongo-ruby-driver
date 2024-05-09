@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -956,11 +956,11 @@ describe Mongo::Index::View do
         end
       end
 
-      context 'on server versions >= 5.0' do
-        min_server_fcv '5.0'
+      context 'on server versions > 5.3' do
+        min_server_fcv '5.4'
 
         it 'passes wildcardProjection correctly' do
-          expect(indexes[:wildcardProjection]).to eq({ '_id' => false, 'rating' => true })
+          expect(indexes[:wildcardProjection]).to eq({ 'rating' => 1 })
         end
       end
     end

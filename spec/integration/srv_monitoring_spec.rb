@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -134,6 +134,7 @@ describe 'SRV Monitoring' do
             nameserver_port: [['127.0.0.1', 5300], ['127.0.0.1', 5300]],
           },
           logger: logger,
+          populator_io: false,
         ),
       )
     end

@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -29,6 +29,9 @@ module Mongo
 
       attr_reader :results
 
+      # @return [ Crud::Spec ] the top-level YAML specification object
+      attr_reader :spec
+
       # Instantiate the new CRUDTest.
       #
       # @example Create the test.
@@ -38,6 +41,9 @@ module Mongo
       # @param [ Array<Hash> ] data The documents the collection
       # must have before the test runs.
       # @param [ Hash ] test The test specification.
+      # @param [ true | false | Proc ] expectations_bson_types Whether bson
+      #   types should be expected. If a Proc is given, it is invoked with the
+      #   test as its argument, and should return true or false.
       #
       # @since 2.6.0
       def initialize(crud_spec, data, test, expectations_bson_types: true)
@@ -71,15 +77,19 @@ module Mongo
           Operation.new(self, op)
         end
 
+        if expectations_bson_types.respond_to?(:call)
+          expectations_bson_types = expectations_bson_types[self]
+        end
+
         mode = if expectations_bson_types then :bson else nil end
         @expectations = BSON::ExtJSON.parse_obj(test['expectations'], mode: mode)
 
         if test['outcome']
-          @outcome = Mongo::CRUD::Outcome.new(BSON::ExtJSON.parse_obj(test['outcome'], mode: :bson))
+          @outcome = Mongo::CRUD::Outcome.new(BSON::ExtJSON.parse_obj(test['outcome'], mode: mode))
         end
 
         @expected_results = operations.map do |o|
-          o = BSON::ExtJSON.parse_obj(o)
+          o = BSON::ExtJSON.parse_obj(o, mode: :bson)
 
           # We check both o.key('error') and o['error'] to provide a better
           # error message in case error: false is ever needed in the tests
@@ -122,7 +132,6 @@ module Mongo
         @test_client ||= begin
           sdam_proc = lambda do |test_client|
             test_client.subscribe(Mongo::Monitoring::COMMAND, command_subscriber)
-
             test_client.subscribe(Mongo::Monitoring::TOPOLOGY_OPENING, sdam_subscriber)
             test_client.subscribe(Mongo::Monitoring::SERVER_OPENING, sdam_subscriber)
             test_client.subscribe(Mongo::Monitoring::SERVER_DESCRIPTION_CHANGED, sdam_subscriber)
@@ -130,6 +139,37 @@ module Mongo
             test_client.subscribe(Mongo::Monitoring::SERVER_CLOSED, sdam_subscriber)
             test_client.subscribe(Mongo::Monitoring::TOPOLOGY_CLOSED, sdam_subscriber)
             test_client.subscribe(Mongo::Monitoring::CONNECTION_POOL, sdam_subscriber)
+          end
+
+          if kms_providers = @client_options.dig(:auto_encryption_options, :kms_providers)
+            @client_options[:auto_encryption_options][:kms_providers] = kms_providers.map do |provider, opts|
+              case provider
+              when :aws_temporary
+                [
+                  :aws,
+                  {
+                    access_key_id: SpecConfig.instance.fle_aws_temp_key,
+                    secret_access_key: SpecConfig.instance.fle_aws_temp_secret,
+                    session_token: SpecConfig.instance.fle_aws_temp_session_token,
+                  }
+                ]
+              when :aws_temporary_no_session_token
+                [
+                  :aws,
+                  {
+                    access_key_id: SpecConfig.instance.fle_aws_temp_key,
+                    secret_access_key: SpecConfig.instance.fle_aws_temp_secret,
+                  }
+                ]
+              else
+                [provider, opts]
+              end
+            end.to_h
+          end
+
+          if @client_options[:auto_encryption_options] && SpecConfig.instance.crypt_shared_lib_path
+            @client_options[:auto_encryption_options][:extra_options] ||= {}
+            @client_options[:auto_encryption_options][:extra_options][:crypt_shared_lib_path] = SpecConfig.instance.crypt_shared_lib_path
           end
 
           ClientRegistry.instance.new_local_client(
@@ -280,6 +320,9 @@ module Mongo
         # without auto_encryption_options for querying results.
         result_collection_name = outcome&.collection_name || @spec.collection_name
         @result_collection = support_client.use(@spec.database_name)[result_collection_name]
+
+        # DRIVERS-2816, adjusted for legacy spec runner
+        @cluster_time = support_client.command(ping: 1).cluster_time
       end
 
       def teardown_test
@@ -317,12 +360,19 @@ module Mongo
         end
       end
 
+      def new_session(options)
+        test_client.start_session(options || {}).tap do |s|
+          # DRIVERS-2816, adjusted for legacy spec runner
+          s.advance_cluster_time(@cluster_time)
+        end
+      end
+
       def session0
-        @session0 ||= test_client.start_session(@session_options[:session0] || {})
+        @session0 ||= new_session(@session_options[:session0])
       end
 
       def session1
-        @session1 ||= test_client.start_session(@session_options[:session1] || {})
+        @session1 ||= new_session(@session_options[:session1])
       end
     end
   end
