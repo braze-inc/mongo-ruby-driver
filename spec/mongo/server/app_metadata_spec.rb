@@ -97,7 +97,7 @@ describe Mongo::Server::AppMetadata do
 
       context 'when no container is present' do
         before do
-          allow_any_instance_of(Mongo::Server::AppMetadata::Environment).to receive(:docker_present?).and_return(false)
+          allow_any_instance_of(Mongo::Server::AppMetadata::Environment).to receive(:docker_present?).and_return(false) # rubocop:disable RSpec/AnyInstance
         end
 
         it 'excludes the :env key from the client document' do
