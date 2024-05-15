@@ -49,13 +49,14 @@ module Mongo
     def select_server(cluster, server_selector, session, failed_server = nil)
       retried_server_selector = false
       begin
-        server_selector.select_server(cluster, nil, session)
+        server_selector.select_server(cluster, nil, session, deprioritized: [failed_server].compact)
       rescue ::Mongo::Error::NoServerAvailable => e
         if !retried_server_selector
           retried_server_selector = true
           log_retry(e, message: "Select server #{cluster.servers.inspect}: #{e.inspect}")
           # Force a synchronous scan to ensure that monitors are online
           cluster.scan!(true)
+          failed_server = nil
           retry
         else
           raise e
