@@ -273,10 +273,10 @@ describe Mongo::Server::AppMetadata::Environment do
       )
 
       it 'includes name and all fields' do
-        expect(env.to_h).to be == {
+        expect(env.to_h).to include({
           name: 'gcp.func', memory_mb: 1024,
           timeout_sec: 60, region: 'us-central1',
-        }
+        })
       end
 
       context 'when a container is present' do

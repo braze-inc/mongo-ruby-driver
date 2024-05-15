@@ -96,6 +96,10 @@ describe Mongo::Server::AppMetadata do
       end
 
       context 'when no container is present' do
+        before do
+          allow_any_instance_of(Mongo::Server::AppMetadata::Environment).to receive(:docker_present?).and_return(false)
+        end
+
         it 'excludes the :env key from the client document' do
           expect(app_metadata.client_document.key?(:env)).to be false
         end
