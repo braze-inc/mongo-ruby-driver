@@ -83,7 +83,7 @@ module Mongo
       # Log a warning so that any application slow down is immediately obvious.
       def log_retry(e, options = nil)
         message = (options || {}).fetch(:message, "Retry")
-        Logger.logger.warn "#{message} due to: #{e.class.name}: #{e.message}"
+        Logger.logger.warn "[jontest] #{message} due to: #{e.class.name}: #{e.message}"
       end
     end
 
