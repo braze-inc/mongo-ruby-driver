@@ -226,24 +226,10 @@ module Mongo
           begin
             result = do_scan
           rescue => e
-            flow = run_sdam_flow({}, scan_error: e)
+            run_sdam_flow({}, scan_error: e)
           else
-            flow = run_sdam_flow(result)
+            run_sdam_flow(result)
           end
-
-          # Disconnect the connection after scanning so that we do not double our connections to the mongoS.
-          # STOP THE PUSH MONITOR
-          if push_monitor
-            stop_push_monitor!
-          end
-
-          # DISCONNECT THE CONNECTION
-          if @connection
-            @connection.disconnect!
-            @connection = nil
-          end
-
-          flow
         end
       end
 
