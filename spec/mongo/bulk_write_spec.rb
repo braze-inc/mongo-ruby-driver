@@ -61,10 +61,10 @@ describe Mongo::BulkWrite do
           []
         end
 
-        it 'raises an exception' do
+        it 'does not raise an exception (braze fork)' do
           expect {
             bulk_write.execute
-          }.to raise_error(ArgumentError, /Bulk write requests cannot be empty/)
+          }.to_not raise_error
         end
       end
 
