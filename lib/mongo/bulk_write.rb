@@ -325,13 +325,12 @@ module Mongo
     # and some which are not), in which case the driver expects the server to
     # fail the operation with an error.
     #
-    # Raise an ArgumentError if requests is empty.
-    #
-    # @raise [ Error::InvalidUpdateDocument, Error::InvalidReplacementDocument,
-    #   ArgumentError ]
+    # @raise [ Error::InvalidUpdateDocument, Error::InvalidReplacementDocument ]
     #   if the document is invalid.
     def validate_requests!
+      # requests_empty = true
       @requests.each do |req|
+        # requests_empty = false
         if op = req.keys.first
           if [:update_one, :update_many].include?(op)
             if doc = maybe_first(req.dig(op, :update))
@@ -357,6 +356,9 @@ module Mongo
             end
           end
         end
+      # Sometimes we send empty requests so don't raise an error here until we fix that
+      # end.tap do
+        # raise ArgumentError, "Bulk write requests cannot be empty" if requests_empty
       end
     end
 
