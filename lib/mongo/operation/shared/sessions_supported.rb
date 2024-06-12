@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2015-2020 MongoDB Inc.
 #
@@ -30,7 +30,6 @@ module Mongo
 
       READ_COMMANDS = [
         :aggregate,
-        :collStats,
         :count,
         :dbStats,
         :distinct,
@@ -199,8 +198,13 @@ module Mongo
           read_doc
         else
           # In replica sets, read preference is passed to the server if one
-          # is specified by the application, and there is no default.
-          read&.to_doc
+          # is specified by the application, except for primary read preferences.
+          read_doc = BSON::Document.new(read&.to_doc || {})
+          if [nil, 'primary'].include?(read_doc['mode'])
+            nil
+          else
+            read_doc
+          end
         end
 
         if read_doc
@@ -224,6 +228,17 @@ module Mongo
         then
           sel[:recoveryToken] = session.recovery_token
         end
+
+        if session.snapshot?
+          unless connection.description.server_version_gte?('5.0')
+            raise Error::SnapshotSessionInvalidServerVersion
+          end
+
+          sel[:readConcern] = {level: 'snapshot'}
+          if session.snapshot_timestamp
+            sel[:readConcern][:atClusterTime] = session.snapshot_timestamp
+          end
+        end
       end
 
       def build_message(connection, context)
@@ -241,10 +256,14 @@ module Mongo
         super.tap do |message|
           if session = context.session
             # Serialize the message to detect client-side problems,
-            # such as invalid BSON keys. The message will be serialized again
+            # such as invalid BSON keys or too large messages.
+            # The message will be serialized again
             # later prior to being sent to the connection.
-            message.serialize(BSON::ByteBuffer.new)
-
+            buf = BSON::ByteBuffer.new
+            message.serialize(buf)
+            if buf.length > connection.max_message_size
+              raise Error::MaxMessageSize.new(connection.max_message_size)
+            end
             session.update_state!
           end
         end

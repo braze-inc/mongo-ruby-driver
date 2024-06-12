@@ -1,10 +1,14 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
 describe 'Cursor pinning' do
-  let(:client) { authorized_client }
+  let(:client) do
+    authorized_client.tap do |client|
+      client.reconnect if client.closed?
+    end
+  end
   let(:collection_name) { 'cursor_pinning' }
   let(:collection) { client[collection_name] }
 
@@ -87,7 +91,7 @@ describe 'Cursor pinning' do
 
         enums = []
         connections = []
-        service_ids = []
+        connection_ids = []
 
         4.times do
           view = collection.find({}, batch_size: 1)
@@ -96,11 +100,11 @@ describe 'Cursor pinning' do
           enum.next
 
           enums << enum
-          service_ids << view.cursor.initial_result.connection_description.service_id
+          connection_ids << view.cursor.initial_result.connection_global_id
           connections << server.pool.check_out
         end
 
-        service_ids.uniq.length.should be > 1
+        connection_ids.uniq.length.should be > 1
 
         server.pool.size.should == 4
 

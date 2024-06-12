@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2020 MongoDB Inc.
 #
@@ -238,16 +238,15 @@ module Mongo
         end
 
         resp = resp.find_response(cert_id)
+        unless resp
+          @resp_errors << "OCSP response from #{report_uri(original_uri, uri)} did not include information about the requested certificate"
+          return false
+        end
         # TODO make a new class instead of patching the stdlib one?
         resp.instance_variable_set('@uri', uri)
         resp.instance_variable_set('@original_uri', original_uri)
         class << resp
           attr_reader :uri, :original_uri
-        end
-
-        unless resp
-          @resp_errors << "OCSP response from #{report_uri(original_uri, uri)} did not include information about the requested certificate"
-          return false
         end
 
         unless resp.check_validity

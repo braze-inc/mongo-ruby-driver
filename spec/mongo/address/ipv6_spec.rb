@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -88,6 +88,13 @@ describe Mongo::Address::IPv6 do
   end
 
   describe '#socket' do
+
+    # In JRuby 9.3.2.0 Socket::PF_INET6 is nil, causing IPv6 tests to fail.
+    # https://github.com/jruby/jruby/issues/7069
+    # JRuby 9.2 works correctly, this test is skipped on all JRuby versions
+    # because we intend to remove JRuby support altogether and therefore
+    # adding logic to condition on JRuby versions does not make sense.
+    fails_on_jruby
 
     let(:address) do
       '[::1]'

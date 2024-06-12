@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -28,7 +28,7 @@ module Mongo
 
       def_delegators :@database, :cluster, :read_preference, :client
       # @api private
-      def_delegators :@database, :server_selector, :read_concern
+      def_delegators :@database, :server_selector, :read_concern, :write_concern
       def_delegators :cluster, :next_primary
 
       # @return [ Integer ] batch_size The size of the batch of results
@@ -53,10 +53,13 @@ module Mongo
       # @option options [ Hash ] :filter A filter on the collections returned.
       # @option options [ true, false ] :authorized_collections A flag, when
       #   set to true, that allows a user without the required privilege
-      #   to run the command when access control is enforced
+      #   to run the command when access control is enforced.
+      # @option options [ Object ] :comment A user-provided
+      #   comment to attach to this command.
       #
-      #   See https://docs.mongodb.com/manual/reference/command/listCollections/
+      #   See https://mongodb.com/docs/manual/reference/command/listCollections/
       #   for more information and usage.
+      # @option options [ Session ] :session The session to use.
       #
       # @return [ Array<String> ] The names of all non-system collections.
       #
@@ -98,14 +101,18 @@ module Mongo
       #   set to true and used with nameOnly: true, that allows a user without the
       #   required privilege to run the command when access control is enforced
       #
-      #   See https://docs.mongodb.com/manual/reference/command/listCollections/
+      #   See https://mongodb.com/docs/manual/reference/command/listCollections/
       #   for more information and usage.
+      # @option options [ Session ] :session The session to use.
+      # @option options [ Boolean ] :deserialize_as_bson Whether to deserialize
+      #   this message using BSON types instead of native Ruby types wherever
+      #   possible.
       #
       # @return [ Array<Hash> ] Info for each collection in the database.
       #
       # @since 2.0.5
       def list_collections(options = {})
-        session = client.send(:get_session)
+        session = client.send(:get_session, options)
         collections_info(session, ServerSelector.primary, options)
       end
 
@@ -137,7 +144,7 @@ module Mongo
       # @param [ Array<Hash> ] pipeline The aggregation pipeline.
       # @param [ Hash ] options The aggregation options.
       #
-      # @return [ Aggregation ] The aggregation object.
+      # @return [ Collection::View::Aggregation ] The aggregation object.
       #
       # @since 2.10.0
       # @api private
@@ -168,7 +175,7 @@ module Mongo
             doc['name'].start_with?('system.') || doc['name'].include?('$')
           end
         else
-          docs = cursor.reject do |doc|
+          cursor.reject do |doc|
             doc['name'].start_with?("#{database.name}.system") || doc['name'].include?('$')
           end
         end
@@ -184,6 +191,7 @@ module Mongo
           spec[:selector][:nameOnly] = true if options[:name_only]
           spec[:selector][:filter] = options[:filter] if options[:filter]
           spec[:selector][:authorizedCollections] = true if options[:authorized_collections]
+          spec[:comment] = options[:comment] if options[:comment]
         end
       end
 
@@ -191,8 +199,42 @@ module Mongo
         Operation::CollectionsInfo.new(collections_info_spec(session, options))
       end
 
+      # Sends command that obtains information about the database.
+      #
+      # This command returns a cursor, so there could be additional commands,
+      # therefore this method is called send *initial* command.
+      #
+      # @param [ Server ] server Server to send the query to.
+      # @param [ Session ] session Session that should be used to send the query.
+      # @param [ Hash ] options
+      # @option options [ Hash | nil ] :filter A query expression to filter
+      #   the list of collections.
+      # @option options [ true | false | nil ] :name_only A flag to indicate
+      #   whether the command should return just the collection/view names
+      #   and type or return both the name and other information.
+      # @option options [ true | false | nil ] :authorized_collections A flag,
+      #   when set to true and used with name_only: true, that allows a user
+      #   without the required privilege (i.e. listCollections
+      #   action on the database) to run the command when access control
+      #   is enforced.
+      # @option options [ Object | nil ] :comment A user-provided comment to attach
+      #   to this command.
+      # @option options [ true | false | nil ] :deserialize_as_bson Whether the
+      #   query results should be deserialized to BSON types, or to Ruby
+      #   types (where possible).
+      #
+      # @return [ Operation::Result ] Result of the query.
       def send_initial_query(server, session, options = {})
-        initial_query_op(session, options).execute(server, context: Operation::Context.new(client: client, session: session))
+        opts = options.dup
+        execution_opts = {}
+        if opts.key?(:deserialize_as_bson)
+          execution_opts[:deserialize_as_bson] = opts.delete(:deserialize_as_bson)
+        end
+        initial_query_op(session, opts).execute(
+          server,
+          context: Operation::Context.new(client: client, session: session),
+          options: execution_opts
+        )
       end
     end
   end

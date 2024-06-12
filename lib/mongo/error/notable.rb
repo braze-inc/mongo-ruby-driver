@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2019-2020 MongoDB Inc.
 #
@@ -57,6 +57,13 @@ module Mongo
         @notes << note
       end
 
+      # Allows multiple notes to be added in a single call, for convenience.
+      #
+      # @api private
+      def add_notes(*notes)
+        notes.each { |note| add_note(note) }
+      end
+
       # Returns connection pool generation for the connection on which the
       # error occurred.
       #
@@ -69,6 +76,13 @@ module Mongo
       #
       # @api experimental
       attr_accessor :service_id
+
+      # Returns global id of the connection on which the error occurred.
+      #
+      # @return [ Integer | nil ] Connection global id.
+      #
+      # @api private
+      attr_accessor :connection_global_id
 
       # @api public
       def to_s

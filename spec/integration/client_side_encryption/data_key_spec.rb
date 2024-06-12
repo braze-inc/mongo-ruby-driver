@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -50,8 +50,27 @@ describe 'Client-Side Encryption' do
                 access_key_id: SpecConfig.instance.fle_aws_key,
                 secret_access_key: SpecConfig.instance.fle_aws_secret,
               },
+              azure: {
+                tenant_id: SpecConfig.instance.fle_azure_tenant_id,
+                client_id: SpecConfig.instance.fle_azure_client_id,
+                client_secret: SpecConfig.instance.fle_azure_client_secret,
+              },
+              gcp: {
+                email: SpecConfig.instance.fle_gcp_email,
+                private_key: SpecConfig.instance.fle_gcp_private_key,
+              },
+              kmip: {
+                endpoint: SpecConfig.instance.fle_kmip_endpoint
+              }
             },
-            key_vault_namespace: 'admin.datakeys',
+            kms_tls_options: {
+              kmip: {
+                ssl_ca_cert: SpecConfig.instance.fle_kmip_tls_ca_file,
+                ssl_cert: SpecConfig.instance.fle_kmip_tls_certificate_key_file,
+                ssl_key: SpecConfig.instance.fle_kmip_tls_certificate_key_file,
+              }
+            },
+            key_vault_namespace: 'keyvault.datakeys',
             schema_map: test_schema_map,
             # Spawn mongocryptd on non-default port for sharded cluster tests
             extra_options: extra_options,
@@ -70,15 +89,34 @@ describe 'Client-Side Encryption' do
             aws: {
               access_key_id: SpecConfig.instance.fle_aws_key,
               secret_access_key: SpecConfig.instance.fle_aws_secret,
+            },
+            azure: {
+              tenant_id: SpecConfig.instance.fle_azure_tenant_id,
+              client_id: SpecConfig.instance.fle_azure_client_id,
+              client_secret: SpecConfig.instance.fle_azure_client_secret,
+            },
+            gcp: {
+              email: SpecConfig.instance.fle_gcp_email,
+              private_key: SpecConfig.instance.fle_gcp_private_key,
+            },
+            kmip: {
+              endpoint: SpecConfig.instance.fle_kmip_endpoint
             }
           },
-          key_vault_namespace: 'admin.datakeys',
+          kms_tls_options: {
+            kmip: {
+              ssl_ca_cert: SpecConfig.instance.fle_kmip_tls_ca_file,
+              ssl_cert: SpecConfig.instance.fle_kmip_tls_certificate_key_file,
+              ssl_key: SpecConfig.instance.fle_kmip_tls_certificate_key_file,
+            }
+          },
+          key_vault_namespace: 'keyvault.datakeys',
         },
       )
     end
 
     before do
-      client.use('admin')['datakeys'].drop
+      client.use('keyvault')['datakeys'].drop
       client.use('db')['coll'].drop
     end
 
@@ -91,7 +129,7 @@ describe 'Client-Side Encryption' do
 
         expect(data_key_id).to be_uuid
 
-        keys = client.use('admin')['datakeys'].find(_id: data_key_id)
+        keys = client.use('keyvault')['datakeys'].find(_id: data_key_id)
 
         expect(keys.count).to eq(1)
         expect(keys.first['masterKey']['provider']).to eq(kms_provider_name)
@@ -134,7 +172,7 @@ describe 'Client-Side Encryption' do
 
         expect do
           client_encrypted['coll'].insert_one(encrypted_placeholder: encrypted)
-        end.to raise_error(Mongo::Error::OperationFailure, /Cannot encrypt element of type binData/)
+        end.to raise_error(Mongo::Error::OperationFailure, /Cannot encrypt element of type(: encrypted binary data| binData)/)
       end
     end
 
@@ -156,8 +194,60 @@ describe 'Client-Side Encryption' do
       let(:data_key_options) do
         {
           master_key: {
-            region: "us-east-1",
-            key: "arn:aws:kms:us-east-1:579766882180:key/89fcc2c4-08b0-4bd9-9f25-e30687b580d0"
+            region: SpecConfig.instance.fle_aws_region,
+            key: SpecConfig.instance.fle_aws_arn,
+          }
+        }
+      end
+
+      it_behaves_like 'can create and use a data key'
+    end
+
+    context 'with Azure KMS options' do
+      include_context 'with Azure kms_providers'
+
+      let(:key_alt_name) { 'azure_altname' }
+      let(:value_to_encrypt) { 'hello azure' }
+      let(:data_key_options) do
+        {
+          master_key: {
+            key_vault_endpoint: SpecConfig.instance.fle_azure_key_vault_endpoint,
+            key_name: SpecConfig.instance.fle_azure_key_name,
+          }
+        }
+      end
+
+      it_behaves_like 'can create and use a data key'
+    end
+
+    context 'with GCP KMS options' do
+      include_context 'with GCP kms_providers'
+
+      let(:key_alt_name) { 'gcp_altname' }
+      let(:value_to_encrypt) { 'hello gcp' }
+      let(:data_key_options) do
+        {
+          master_key: {
+            project_id: SpecConfig.instance.fle_gcp_project_id,
+            location: SpecConfig.instance.fle_gcp_location,
+            key_ring: SpecConfig.instance.fle_gcp_key_ring,
+            key_name: SpecConfig.instance.fle_gcp_key_name,
+          }
+        }
+      end
+
+      it_behaves_like 'can create and use a data key'
+    end
+
+    context 'with KMIP KMS options' do
+      include_context 'with KMIP kms_providers'
+
+      let(:key_alt_name) { 'kmip_altname' }
+      let(:value_to_encrypt) { 'hello kmip' }
+      let(:data_key_options) do
+        {
+          master_key: {
+            key_id: "1"
           }
         }
       end

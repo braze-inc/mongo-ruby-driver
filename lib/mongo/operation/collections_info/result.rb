@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -32,12 +32,15 @@ module Mongo
         # @param [ Server::Description ] connection_description
         #   Server description of the server that performed the operation that
         #   this result is for.
+        # @param [ Integer ] connection_global_id
+        #   Global id of the connection on which the operation that
+        #   this result is for was performed.
         # @param [ String ] database_name The name of the database that the
         #   query was sent to.
         #
         # @api private
-        def initialize(replies, connection_description, database_name)
-          super(replies, connection_description)
+        def initialize(replies, connection_description, connection_global_id, database_name)
+          super(replies, connection_description, connection_global_id)
           @database_name = database_name
         end
 

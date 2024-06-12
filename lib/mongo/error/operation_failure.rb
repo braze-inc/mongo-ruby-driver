@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2015-2020 MongoDB Inc.
 #
@@ -14,6 +14,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+require 'mongo/error/read_write_retryable'
 
 module Mongo
   class Error
@@ -24,58 +25,7 @@ module Mongo
     class OperationFailure < Error
       extend Forwardable
       include SdamErrorDetection
-
-      # Error codes and code names that should result in a failing write
-      # being retried.
-      #
-      # @since 2.6.0
-      # @api private
-      WRITE_RETRY_ERRORS = [
-        {:code_name => 'HostUnreachable', :code => 6},
-        {:code_name => 'HostNotFound', :code => 7},
-        {:code_name => 'NetworkTimeout', :code => 89},
-        {:code_name => 'ShutdownInProgress', :code => 91},
-        {:code_name => 'PrimarySteppedDown', :code => 189},
-        {:code_name => 'ExceededTimeLimit', :code => 262},
-        {:code_name => 'SocketException', :code => 9001},
-        {:code_name => 'NotMaster', :code => 10107},
-        {:code_name => 'InterruptedAtShutdown', :code => 11600},
-        {:code_name => 'InterruptedDueToReplStateChange', :code => 11602},
-        {:code_name => 'NotPrimaryNoSecondaryOk', :code => 13435},
-        {:code_name => 'NotMasterOrSecondary', :code => 13436},
-      ].freeze
-
-      # These are magic error messages that could indicate a master change.
-      #
-      # @since 2.4.2
-      # @api private
-      WRITE_RETRY_MESSAGES = [
-        'not master',
-        'node is recovering',
-        'interrupted at shutdown',
-        'transport error',
-        'socket exception',
-        'could not get last error',
-        'dbclient error communicating with server'
-      ].freeze
-
-      # These are magic error messages that could indicate a cluster
-      # reconfiguration behind a mongos.
-      #
-      # @since 2.1.1
-      # @api private
-      RETRY_MESSAGES = (WRITE_RETRY_MESSAGES + [
-        'transport error',
-        'socket exception',
-        "can't connect",
-        'connect failed',
-        'error querying',
-        'could not get last error',
-        'connection attempt failed',
-        'interrupted at shutdown',
-        'unknown replica set',
-        'dbclient error communicating with server'
-      ]).uniq.freeze
+      include ReadWriteRetryable
 
       def_delegators :@result, :operation_time
 
@@ -102,41 +52,6 @@ module Mongo
       #
       # @api experimental
       attr_reader :server_message
-
-      # Whether the error is a retryable error according to the legacy
-      # read retry logic.
-      #
-      # @return [ true, false ]
-      #
-      # @since 2.1.1
-      # @deprecated
-      def retryable?
-        write_retryable? ||
-        code.nil? && RETRY_MESSAGES.any?{ |m| message.include?(m) }
-      end
-
-      # Whether the error is a retryable error according to the modern retryable
-      # reads and retryable writes specifications.
-      #
-      # This method is also used by the legacy retryable write logic to determine
-      # whether an error is a retryable one.
-      #
-      # @return [ true, false ]
-      #
-      # @since 2.4.2
-      def write_retryable?
-        write_retryable_code? ||
-        code.nil? && WRITE_RETRY_MESSAGES.any? { |m| message.include?(m) }
-      end
-
-      private def write_retryable_code?
-        if code
-          WRITE_RETRY_ERRORS.any? { |e| e[:code] == code }
-        else
-          # return false rather than nil
-          false
-        end
-      end
 
       # Error codes and code names that should result in a failing getMore
       # command on a change stream NOT being resumed.
@@ -167,7 +82,7 @@ module Mongo
       #
       # @since 2.6.0
       # @api private
-      CHANGE_STREAM_RESUME_MESSAGES = WRITE_RETRY_MESSAGES
+      CHANGE_STREAM_RESUME_MESSAGES = ReadWriteRetryable::WRITE_RETRY_MESSAGES
 
       # Can the change stream on which this error occurred be resumed,
       # provided the operation that triggered this error was a getMore?
@@ -229,6 +144,12 @@ module Mongo
       # @since 2.10.0
       attr_reader :write_concern_error_code_name
 
+      # @return [ String | nil ] The details of the error.
+      #   For WriteConcernErrors this is `document['writeConcernError']['errInfo']`.
+      #   For WriteErrors this is `document['writeErrors'][0]['errInfo']`.
+      #   For all other errors this is nil.
+      attr_reader :details
+
       # @return [ BSON::Document | nil ] The server-returned error document.
       #
       # @api experimental
@@ -263,10 +184,10 @@ module Mongo
       # @option options [ Array<String> ] :labels The set of labels associated
       #   with the error.
       # @option options [ true | false ] :wtimeout Whether the error is a wtimeout.
-      #
-      # @since 2.5.0, options added in 2.6.0
       def initialize(message = nil, result = nil, options = {})
-        super(message)
+        @details = retrieve_details(options[:document])
+        super(append_details(message, @details))
+
         @result = result
         @code = options[:code]
         @code_name = options[:code_name]
@@ -310,6 +231,28 @@ module Mongo
         # Note that the document is expected to be a BSON::Document, thus
         # either having string keys or providing indifferent access.
         code == 20 && server_message&.start_with?("Transaction numbers") || false
+      end
+
+      private
+
+      # Retrieve the details from a document
+      #
+      # @return [ Hash | nil ] the details extracted from the document
+      def retrieve_details(document)
+        return nil unless document
+        if wce = document['writeConcernError']
+          return wce['errInfo']
+        elsif we = document['writeErrors']&.first
+          return we['errInfo']
+        end
+      end
+
+      # Append the details to the message
+      #
+      # @return [ String ] the message with the details appended to it
+      def append_details(message, details)
+        return message unless details && message
+        message + " -- #{details.to_json}"
       end
     end
   end

@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2020 MongoDB Inc.
 #
@@ -92,7 +92,7 @@ module Mongo
       #
       # @api private
       def handshake_command(handshake_document)
-        if handshake_document['apiVersion']
+        if handshake_document['apiVersion'] || handshake_document['loadBalanced']
           Protocol::Msg.new(
             [], {}, handshake_document.merge({'$db' => Database::ADMIN})
           )
@@ -163,6 +163,9 @@ module Mongo
         if respond_to?(:generation)
           # Non-monitoring connections
           e.generation = generation
+          if respond_to?(:global_id)
+            e.connection_global_id = global_id
+          end
           if respond_to?(:description)
             e.service_id = service_id
           end

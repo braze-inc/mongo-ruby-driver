@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2020 MongoDB, Inc.
 #
@@ -114,24 +114,24 @@ module Mongo
       #
       # @param [ Mongo::CachingCursor ] cursor The CachingCursor instance to store.
       #
-      # @option opts [ String | nil ] namespace The namespace of the query,
+      # @option opts [ String | nil ] :namespace The namespace of the query,
       #   in the format "database_name.collection_name".
-      # @option opts [ Array, Hash ] selector The selector passed to the query.
+      # @option opts [ Array, Hash ] :selector The selector passed to the query.
       #   For most queries, this will be a Hash, but for aggregations, this
       #   will be an Array representing the aggregation pipeline. May not be nil.
-      # @option opts [ Integer | nil ] skip The skip value of the query.
-      # @option opts [ Hash | nil ] sort The order of the query results
+      # @option opts [ Integer | nil ] :skip The skip value of the query.
+      # @option opts [ Hash | nil ] :sort The order of the query results
       #   (e.g. { name: -1 }).
-      # @option opts [ Integer | nil ] limit The limit value of the query.
-      # @option opts [ Hash | nil ] projection The projection of the query
+      # @option opts [ Integer | nil ] :limit The limit value of the query.
+      # @option opts [ Hash | nil ] :projection The projection of the query
       #   results (e.g. { name: 1 }).
-      # @option opts [ Hash | nil ] collation The collation of the query
+      # @option opts [ Hash | nil ] :collation The collation of the query
       #   (e.g. { "locale" => "fr_CA" }).
-      # @option opts [ Hash | nil ] read_concern The read concern of the query
+      # @option opts [ Hash | nil ] :read_concern The read concern of the query
       #   (e.g. { level: :majority }).
-      # @option opts [ Hash | nil ] read_preference The read preference of
+      # @option opts [ Hash | nil ] :read_preference The read preference of
       #   the query (e.g. { mode: :secondary }).
-      # @option opts [ Boolean | nil ] multi_collection Whether the query
+      # @option opts [ Boolean | nil ] :multi_collection Whether the query
       #   results could potentially come from multiple collections. When true,
       #   these results will be stored under the nil namespace key and cleared
       #   on every write command.
@@ -152,24 +152,24 @@ module Mongo
       # For the given query options, retrieve a cached cursor that can be used
       # to obtain the correct query results, if one exists in the cache.
       #
-      # @option opts [ String | nil ] namespace The namespace of the query,
+      # @option opts [ String | nil ] :namespace The namespace of the query,
       #   in the format "database_name.collection_name".
-      # @option opts [ Array, Hash ] selector The selector passed to the query.
+      # @option opts [ Array, Hash ] :selector The selector passed to the query.
       #   For most queries, this will be a Hash, but for aggregations, this
       #   will be an Array representing the aggregation pipeline. May not be nil.
-      # @option opts [ Integer | nil ] skip The skip value of the query.
-      # @option opts [ Hash | nil ] sort The order of the query results
+      # @option opts [ Integer | nil ] :skip The skip value of the query.
+      # @option opts [ Hash | nil ] :sort The order of the query results
       #   (e.g. { name: -1 }).
-      # @option opts [ Integer | nil ] limit The limit value of the query.
-      # @option opts [ Hash | nil ] projection The projection of the query
+      # @option opts [ Integer | nil ] :limit The limit value of the query.
+      # @option opts [ Hash | nil ] :projection The projection of the query
       #   results (e.g. { name: 1 }).
-      # @option opts [ Hash | nil ] collation The collation of the query
+      # @option opts [ Hash | nil ] :collation The collation of the query
       #   (e.g. { "locale" => "fr_CA" }).
-      # @option opts [ Hash | nil ] read_concern The read concern of the query
+      # @option opts [ Hash | nil ] :read_concern The read concern of the query
       #   (e.g. { level: :majority }).
-      # @option opts [ Hash | nil ] read_preference The read preference of
+      # @option opts [ Hash | nil ] :read_preference The read preference of
       #   the query (e.g. { mode: :secondary }).
-      # @option opts [ Boolean | nil ] multi_collection Whether the query
+      # @option opts [ Boolean | nil ] :multi_collection Whether the query
       #   results could potentially come from multiple collections. When true,
       #   these results will be stored under the nil namespace key and cleared
       #   on every write command.
@@ -179,7 +179,8 @@ module Mongo
       #
       # @api private
       def get(**opts)
-        limit = opts[:limit]
+        limit = normalized_limit(opts[:limit])
+
         _namespace_key = namespace_key(**opts)
         _cache_key = cache_key(**opts)
 
@@ -189,7 +190,7 @@ module Mongo
         caching_cursor = namespace_hash[_cache_key]
         return nil unless caching_cursor
 
-        caching_cursor_limit = caching_cursor.view.limit
+        caching_cursor_limit = normalized_limit(caching_cursor.view.limit)
 
         # There are two scenarios in which a caching cursor could fulfill the
         # query:
@@ -199,6 +200,7 @@ module Mongo
         #
         # Otherwise, return nil because the stored cursor will not satisfy
         # the query.
+
         if limit && (caching_cursor_limit.nil? || caching_cursor_limit >= limit)
           caching_cursor
         elsif limit.nil? && caching_cursor_limit.nil?
@@ -206,6 +208,14 @@ module Mongo
         else
           nil
         end
+      end
+
+      def normalized_limit(limit)
+        return nil unless limit
+        # For the purposes of caching, a limit of 0 means no limit, as mongo treats it as such.
+        return nil if limit == 0
+        # For the purposes of caching, a negative limit is the same as as a positive limit.
+        limit.abs
       end
 
       private
@@ -269,6 +279,21 @@ module Mongo
         end
       ensure
         QueryCache.clear
+      end
+
+      # ActiveJob middleware that activates the query cache for each job.
+      module ActiveJob
+        def self.included(base)
+          base.class_eval do
+            around_perform do |_job, block|
+              QueryCache.cache do
+                block.call
+              end
+            ensure
+              QueryCache.clear
+            end
+          end
+        end
       end
     end
   end

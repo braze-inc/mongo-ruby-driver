@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -48,6 +48,10 @@ module Mongo
         #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
         # @option opts [ Hash ] :write_concern The write concern options.
         #   Can be :w => Integer, :fsync => Boolean, :j => Boolean.
+        # @option options [ Hash ] :let Mapping of variables to use in the command.
+        #   See the server documentation for details.
+        # @option options [ Object ] :comment A user-provided
+        #   comment to attach to this command.
         #
         # @return [ BSON::Document, nil ] The document, if found.
         #
@@ -58,9 +62,6 @@ module Mongo
               WriteConcern.get(opts[:write_concern])
             else
               write_concern_with_session(session)
-            end
-            if opts[:hint] && write_concern && !write_concern.acknowledged?
-              raise Error::UnsupportedOption.hint_error(unacknowledged_write: true)
             end
 
             QueryCache.clear_namespace(collection.namespace)
@@ -75,18 +76,26 @@ module Mongo
               bypassDocumentValidation: opts[:bypass_document_validation],
               hint: opts[:hint],
               collation: opts[:collation] || opts['collation'] || collation,
+              let: opts[:let],
+              comment: opts[:comment],
             }.compact
 
-            write_with_retry(session, write_concern) do |server, txn_num|
+            context = Operation::Context.new(client: client, session: session)
+            write_with_retry(write_concern, context: context) do |connection, txn_num, context|
+              gte_4_4 = connection.server.description.server_version_gte?('4.4')
+              if !gte_4_4 && opts[:hint] && write_concern && !write_concern.acknowledged?
+                raise Error::UnsupportedOption.hint_error(unacknowledged_write: true)
+              end
+
               Operation::WriteCommand.new(
                 selector: cmd,
                 db_name: database.name,
                 write_concern: write_concern,
                 session: session,
                 txn_num: txn_num,
-              ).execute(server, context: Operation::Context.new(client: client, session: session))
+              ).execute_with_connection(connection, context: context)
             end
-          end.first['value']
+          end.first&.fetch('value', nil)
         end
 
         # Finds a single document and replaces it.
@@ -109,6 +118,8 @@ module Mongo
         #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
         # @option opts [ Hash ] :write_concern The write concern options.
         #   Can be :w => Integer, :fsync => Boolean, :j => Boolean.
+        # @option options [ Hash ] :let Mapping of variables to use in the command.
+        #   See the server documentation for details.
         #
         # @return [ BSON::Document ] The document.
         #
@@ -142,8 +153,12 @@ module Mongo
         #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
         # @option opts [ Hash ] :write_concern The write concern options.
         #   Can be :w => Integer, :fsync => Boolean, :j => Boolean.
+        # @option options [ Hash ] :let Mapping of variables to use in the command.
+        #   See the server documentation for details.
+        # @option options [ Object ] :comment A user-provided
+        #   comment to attach to this command.
         #
-        # @return [ BSON::Document ] The document.
+        # @return [ BSON::Document | nil ] The document or nil if none is found.
         #
         # @since 2.0.0
         def find_one_and_update(document, opts = {})
@@ -152,9 +167,6 @@ module Mongo
               WriteConcern.get(opts[:write_concern])
             else
               write_concern_with_session(session)
-            end
-            if opts[:hint] && write_concern && !write_concern.acknowledged?
-              raise Error::UnsupportedOption.hint_error(unacknowledged_write: true)
             end
 
             QueryCache.clear_namespace(collection.namespace)
@@ -172,18 +184,26 @@ module Mongo
               bypassDocumentValidation: opts[:bypass_document_validation],
               hint: opts[:hint],
               collation: opts[:collation] || opts['collation'] || collation,
+              let: opts[:let],
+              comment: opts[:comment]
             }.compact
 
-            write_with_retry(session, write_concern) do |server, txn_num|
+            context = Operation::Context.new(client: client, session: session)
+            write_with_retry(write_concern, context: context) do |connection, txn_num, context|
+              gte_4_4 = connection.server.description.server_version_gte?('4.4')
+              if !gte_4_4 && opts[:hint] && write_concern && !write_concern.acknowledged?
+                raise Error::UnsupportedOption.hint_error(unacknowledged_write: true)
+              end
+
               Operation::WriteCommand.new(
                 selector: cmd,
                 db_name: database.name,
                 write_concern: write_concern,
                 session: session,
                 txn_num: txn_num,
-              ).execute(server, context: Operation::Context.new(client: client, session: session))
+              ).execute_with_connection(connection, context: context)
             end
-          end.first['value']
+          end.first&.fetch('value', nil)
           value unless value.nil? || value.empty?
         end
 
@@ -200,6 +220,10 @@ module Mongo
         #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
         # @option opts [ Hash ] :write_concern The write concern options.
         #   Can be :w => Integer, :fsync => Boolean, :j => Boolean.
+        # @option options [ Hash ] :let Mapping of variables to use in the command.
+        #   See the server documentation for details.
+        # @option options [ Object ] :comment A user-provided
+        #   comment to attach to this command.
         #
         # @return [ Result ] The response from the database.
         #
@@ -211,9 +235,6 @@ module Mongo
             else
               write_concern_with_session(session)
             end
-            if opts[:hint] && write_concern && !write_concern.acknowledged?
-              raise Error::UnsupportedOption.hint_error(unacknowledged_write: true)
-            end
 
             QueryCache.clear_namespace(collection.namespace)
 
@@ -224,7 +245,13 @@ module Mongo
               collation: opts[:collation] || opts['collation'] || collation,
             }.compact
 
-            nro_write_with_retry(session, write_concern) do |server|
+            context = Operation::Context.new(client: client, session: session)
+            nro_write_with_retry(write_concern, context: context) do |connection, txn_num, context|
+              gte_4_4 = connection.server.description.server_version_gte?('4.4')
+              if !gte_4_4 && opts[:hint] && write_concern && !write_concern.acknowledged?
+                raise Error::UnsupportedOption.hint_error(unacknowledged_write: true)
+              end
+
               Operation::Delete.new(
                 deletes: [ delete_doc ],
                 db_name: collection.database.name,
@@ -232,7 +259,9 @@ module Mongo
                 write_concern: write_concern,
                 bypass_document_validation: !!opts[:bypass_document_validation],
                 session: session,
-              ).execute(server, context: Operation::Context.new(client: client, session: session))
+                let: opts[:let],
+                comment: opts[:comment],
+              ).execute_with_connection(connection, context: context)
             end
           end
         end
@@ -250,6 +279,10 @@ module Mongo
         #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
         # @option opts [ Hash ] :write_concern The write concern options.
         #   Can be :w => Integer, :fsync => Boolean, :j => Boolean.
+        # @option options [ Hash ] :let Mapping of variables to use in the command.
+        #   See the server documentation for details.
+        # @option options [ Object ] :comment A user-provided
+        #   comment to attach to this command.
         #
         # @return [ Result ] The response from the database.
         #
@@ -261,9 +294,6 @@ module Mongo
             else
               write_concern_with_session(session)
             end
-            if opts[:hint] && write_concern && !write_concern.acknowledged?
-              raise Error::UnsupportedOption.hint_error(unacknowledged_write: true)
-            end
 
             QueryCache.clear_namespace(collection.namespace)
 
@@ -274,7 +304,13 @@ module Mongo
               collation: opts[:collation] || opts['collation'] || collation,
             }.compact
 
-            write_with_retry(session, write_concern) do |server, txn_num|
+            context = Operation::Context.new(client: client, session: session)
+            write_with_retry(write_concern, context: context) do |connection, txn_num, context|
+              gte_4_4 = connection.server.description.server_version_gte?('4.4')
+              if !gte_4_4 && opts[:hint] && write_concern && !write_concern.acknowledged?
+                raise Error::UnsupportedOption.hint_error(unacknowledged_write: true)
+              end
+
               Operation::Delete.new(
                 deletes: [ delete_doc ],
                 db_name: collection.database.name,
@@ -283,7 +319,9 @@ module Mongo
                 bypass_document_validation: !!opts[:bypass_document_validation],
                 session: session,
                 txn_num: txn_num,
-              ).execute(server, context: Operation::Context.new(client: client, session: session))
+                let: opts[:let],
+                comment: opts[:comment],
+              ).execute_with_connection(connection, context: context)
             end
           end
         end
@@ -306,6 +344,10 @@ module Mongo
         #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
         # @option opts [ Hash ] :write_concern The write concern options.
         #   Can be :w => Integer, :fsync => Boolean, :j => Boolean.
+        # @option options [ Hash ] :let Mapping of variables to use in the command.
+        #   See the server documentation for details.
+        # @option options [ Object ] :comment A user-provided
+        #   comment to attach to this command.
         #
         # @return [ Result ] The response from the database.
         #
@@ -317,9 +359,7 @@ module Mongo
             else
               write_concern_with_session(session)
             end
-            if opts[:hint] && write_concern && !write_concern.acknowledged?
-              raise Error::UnsupportedOption.hint_error(unacknowledged_write: true)
-            end
+            validate_replacement_documents!(replacement)
 
             QueryCache.clear_namespace(collection.namespace)
 
@@ -334,7 +374,13 @@ module Mongo
               update_doc['upsert'] = true
             end
 
-            write_with_retry(session, write_concern) do |server, txn_num|
+            context = Operation::Context.new(client: client, session: session)
+            write_with_retry(write_concern, context: context) do |connection, txn_num, context|
+              gte_4_2 = connection.server.description.server_version_gte?('4.2')
+              if !gte_4_2 && opts[:hint] && write_concern && !write_concern.acknowledged?
+                raise Error::UnsupportedOption.hint_error(unacknowledged_write: true)
+              end
+
               Operation::Update.new(
                 updates: [ update_doc ],
                 db_name: collection.database.name,
@@ -343,7 +389,9 @@ module Mongo
                 bypass_document_validation: !!opts[:bypass_document_validation],
                 session: session,
                 txn_num: txn_num,
-              ).execute(server, context: Operation::Context.new(client: client, session: session))
+                let: opts[:let],
+                comment: opts[:comment],
+              ).execute_with_connection(connection, context: context)
             end
           end
         end
@@ -368,6 +416,10 @@ module Mongo
         #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
         # @option opts [ Hash ] :write_concern The write concern options.
         #   Can be :w => Integer, :fsync => Boolean, :j => Boolean.
+        # @option options [ Hash ] :let Mapping of variables to use in the command.
+        #   See the server documentation for details.
+        # @option options [ Object ] :comment A user-provided
+        #   comment to attach to this command.
         #
         # @return [ Result ] The response from the database.
         #
@@ -379,9 +431,7 @@ module Mongo
             else
               write_concern_with_session(session)
             end
-            if opts[:hint] && write_concern && !write_concern.acknowledged?
-              raise Error::UnsupportedOption.hint_error(unacknowledged_write: true)
-            end
+            validate_update_documents!(spec)
 
             QueryCache.clear_namespace(collection.namespace)
 
@@ -397,7 +447,13 @@ module Mongo
               update_doc['upsert'] = true
             end
 
-            nro_write_with_retry(session, write_concern) do |server|
+            context = Operation::Context.new(client: client, session: session)
+            nro_write_with_retry(write_concern, context: context) do |connection, txn_num, context|
+              gte_4_2 = connection.server.description.server_version_gte?('4.2')
+              if !gte_4_2 && opts[:hint] && write_concern && !write_concern.acknowledged?
+                raise Error::UnsupportedOption.hint_error(unacknowledged_write: true)
+              end
+
               Operation::Update.new(
                 updates: [ update_doc ],
                 db_name: collection.database.name,
@@ -405,7 +461,9 @@ module Mongo
                 write_concern: write_concern,
                 bypass_document_validation: !!opts[:bypass_document_validation],
                 session: session,
-              ).execute(server, context: Operation::Context.new(client: client, session: session))
+                let: opts[:let],
+                comment: opts[:comment],
+              ).execute_with_connection(connection, context: context)
             end
           end
         end
@@ -430,6 +488,10 @@ module Mongo
         #   May be specified as a Hash (e.g. { _id: 1 }) or a String (e.g. "_id_").
         # @option opts [ Hash ] :write_concern The write concern options.
         #   Can be :w => Integer, :fsync => Boolean, :j => Boolean.
+        # @option options [ Hash ] :let Mapping of variables to use in the command.
+        #   See the server documentation for details.
+        # @option options [ Object ] :comment A user-provided
+        #   comment to attach to this command.
         #
         # @return [ Result ] The response from the database.
         #
@@ -441,9 +503,7 @@ module Mongo
             else
               write_concern_with_session(session)
             end
-            if opts[:hint] && write_concern && !write_concern.acknowledged?
-              raise Error::UnsupportedOption.hint_error(unacknowledged_write: true)
-            end
+            validate_update_documents!(spec)
 
             QueryCache.clear_namespace(collection.namespace)
 
@@ -458,7 +518,13 @@ module Mongo
               update_doc['upsert'] = true
             end
 
-            write_with_retry(session, write_concern) do |server, txn_num|
+            context = Operation::Context.new(client: client, session: session)
+            write_with_retry(write_concern, context: context) do |connection, txn_num, context|
+              gte_4_2 = connection.server.description.server_version_gte?('4.2')
+              if !gte_4_2 && opts[:hint] && write_concern && !write_concern.acknowledged?
+                raise Error::UnsupportedOption.hint_error(unacknowledged_write: true)
+              end
+
               Operation::Update.new(
                 updates: [ update_doc ],
                 db_name: collection.database.name,
@@ -467,7 +533,55 @@ module Mongo
                 bypass_document_validation: !!opts[:bypass_document_validation],
                 session: session,
                 txn_num: txn_num,
-              ).execute(server, context: Operation::Context.new(client: client, session: session))
+                let: opts[:let],
+                comment: opts[:comment],
+              ).execute_with_connection(connection, context: context)
+            end
+          end
+        end
+
+        private
+
+        # Checks the update documents to make sure they only have atomic modifiers.
+        # Note that as per the spec, we only have to examine the first element
+        # in the update document.
+        #
+        # @param [ Hash | Array<Hash> ] spec The update document or pipeline.
+        #
+        # @raise [ Error::InvalidUpdateDocument ] if the first key in the
+        #   document does not start with a $.
+        def validate_update_documents!(spec)
+          if update = spec.is_a?(Array) ? spec&.first : spec
+            if key = update.keys&.first
+              unless key.to_s.start_with?("$")
+                if Mongo.validate_update_replace
+                  raise Error::InvalidUpdateDocument.new(key: key)
+                else
+                  Error::InvalidUpdateDocument.warn(Logger.logger, key)
+                end
+              end
+            end
+          end
+        end
+
+        # Check the replacement documents to make sure they don't have atomic
+        # modifiers. Note that as per the spec, we only have to examine the
+        # first element in the replacement document.
+        #
+        # @param [ Hash | Array<Hash> ] spec The replacement document or pipeline.
+        #
+        # @raise [ Error::InvalidUpdateDocument ] if the first key in the
+        #   document does not start with a $.
+        def validate_replacement_documents!(spec)
+          if replace = spec.is_a?(Array) ? spec&.first : spec
+            if key = replace.keys&.first
+              if key.to_s.start_with?("$")
+                if Mongo.validate_update_replace
+                  raise Error::InvalidReplacementDocument.new(key: key)
+                else
+                  Error::InvalidReplacementDocument.warn(Logger.logger, key)
+                end
+              end
             end
           end
         end

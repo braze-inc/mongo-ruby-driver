@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -53,7 +53,7 @@ module Mongo
         #
         # @return [ Hash ] A single document with the query plan.
         #
-        # @see https://docs.mongodb.com/manual/reference/method/db.collection.explain/#db.collection.explain
+        # @see https://mongodb.com/docs/manual/reference/method/db.collection.explain/#db.collection.explain
         #
         # @since 2.0.0
         def explain(**opts)

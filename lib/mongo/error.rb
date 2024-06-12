@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -16,6 +16,7 @@
 # limitations under the License.
 
 require 'mongo/error/notable'
+require 'mongo/error/labelable'
 
 module Mongo
   # Base error class for all Mongo related errors.
@@ -23,6 +24,7 @@ module Mongo
   # @since 2.0.0
   class Error < StandardError
     include Notable
+    include Labelable
 
     # The error code field.
     #
@@ -109,22 +111,7 @@ module Mongo
 
     def initialize(msg = nil)
       super
-      @labels = []
       @write_concern_error_labels = []
-    end
-
-    # Does the error have the given label?
-    #
-    # @example
-    #   error.label?(label)
-    #
-    # @param [ String ] label The label to check if the error has.
-    #
-    # @return [ true, false ] Whether the error has the given label.
-    #
-    # @since 2.6.0
-    def label?(label)
-      @labels.include?(label)
     end
 
     # Does the write concern error have the given label?
@@ -136,33 +123,11 @@ module Mongo
       @write_concern_error_labels.include?(label)
     end
 
-    # Gets the set of labels associated with the error.
-    #
-    # @example
-    #   error.labels
-    #
-    # @return [ Array ] The set of labels.
-    #
-    # @since 2.7.0
-    def labels
-      @labels.dup
-    end
-
     # The set of error labels associated with the write concern error.
     #
     # @return [ Array<String> ] The list of error labels.
     def write_concern_error_labels
       @write_concern_error_labels.dup
-    end
-
-    # Adds the specified label to the error instance, if the label is not
-    # already in the set of labels.
-    #
-    # @param [ String ] label The label to add.
-    #
-    # @api private
-    def add_label(label)
-      @labels << label unless label?(label)
     end
   end
 end
@@ -174,9 +139,11 @@ require 'mongo/error/parser'
 require 'mongo/error/write_retryable'
 require 'mongo/error/change_stream_resumable'
 require 'mongo/error/bulk_write_error'
+require 'mongo/error/client_closed'
 require 'mongo/error/closed_stream'
 require 'mongo/error/connection_check_out_timeout'
 require 'mongo/error/connection_perished'
+require 'mongo/error/connection_unavailable'
 require 'mongo/error/credential_check_error'
 require 'mongo/error/crypt_error'
 require 'mongo/error/extra_file_chunk'
@@ -186,11 +153,13 @@ require 'mongo/error/invalid_address'
 require 'mongo/error/invalid_bulk_operation'
 require 'mongo/error/invalid_bulk_operation_type'
 require 'mongo/error/invalid_collection_name'
+require 'mongo/error/invalid_config_option'
 require 'mongo/error/invalid_cursor_operation'
 require 'mongo/error/invalid_database_name'
 require 'mongo/error/invalid_document'
 require 'mongo/error/invalid_file'
 require 'mongo/error/invalid_file_revision'
+require 'mongo/error/invalid_max_connecting'
 require 'mongo/error/invalid_min_pool_size'
 require 'mongo/error/invalid_read_option'
 require 'mongo/error/invalid_application_name'
@@ -223,16 +192,23 @@ require 'mongo/error/no_server_available'
 require 'mongo/error/no_srv_records'
 require 'mongo/error/session_ended'
 require 'mongo/error/sessions_not_supported'
+require 'mongo/error/session_not_materialized'
+require 'mongo/error/snapshot_session_invalid_server_version'
+require 'mongo/error/snapshot_session_transaction_prohibited'
 require 'mongo/error/operation_failure'
+require 'mongo/error/pool_error'
 require 'mongo/error/pool_closed_error'
+require 'mongo/error/pool_paused_error'
 require 'mongo/error/raise_original_error'
 require 'mongo/error/server_certificate_revoked'
 require 'mongo/error/socket_error'
+require 'mongo/error/pool_cleared_error'
 require 'mongo/error/socket_timeout_error'
 require 'mongo/error/failed_string_prep_validation'
 require 'mongo/error/unchangeable_collection_option'
 require 'mongo/error/unexpected_chunk_length'
 require 'mongo/error/unexpected_response'
+require 'mongo/error/missing_connection'
 require 'mongo/error/missing_file_chunk'
 require 'mongo/error/missing_password'
 require 'mongo/error/missing_resume_token'
@@ -240,6 +216,8 @@ require 'mongo/error/missing_scram_server_signature'
 require 'mongo/error/missing_service_id'
 require 'mongo/error/server_api_conflict'
 require 'mongo/error/server_api_not_supported'
+require 'mongo/error/server_not_usable'
+require 'mongo/error/transactions_not_supported'
 require 'mongo/error/unknown_payload_type'
 require 'mongo/error/unmet_dependency'
 require 'mongo/error/unsupported_option'

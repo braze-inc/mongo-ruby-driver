@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -204,7 +204,7 @@ module Mongo
       #
       # @since 2.1.0
       def initialize(test_path)
-        @spec = YAML.load(File.read(test_path))
+        @spec = ::Utils.load_spec_yaml_file(test_path)
         @data = @spec['data']
         @tests = @spec['tests']
       end

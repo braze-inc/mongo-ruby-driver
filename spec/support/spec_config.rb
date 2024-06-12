@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'singleton'
 require 'pathname'
@@ -87,6 +87,8 @@ class SpecConfig
 
       begin
         case client.cluster.topology.class.name
+        when /LoadBalanced/
+          { connect: :load_balanced }
         when /Replica/
           { connect: :replica_set, replica_set: client.cluster.topology.replica_set_name }
         when /Sharded/
@@ -124,6 +126,10 @@ class SpecConfig
 
   def macos?
     !!(RbConfig::CONFIG['host_os'].downcase =~ /\bdarwin/)
+  end
+
+  def windows?
+    ENV['OS'] == 'Windows_NT' && !RUBY_PLATFORM.match?(/cygwin/)
   end
 
   def platform
@@ -164,6 +170,11 @@ class SpecConfig
   # @return [ true | false ] Whether specs are running against a serverless instance.
   def serverless?
     !!ENV['SERVERLESS']
+  end
+
+  def kill_all_server_sessions?
+    !serverless? && # Serverless instances do not support killAllSessions command.
+      ClusterConfig.instance.fcv_ish >= '3.6'
   end
 
   # Test suite configuration
@@ -296,7 +307,11 @@ EOT
   end
 
   def local_client_pem_path
-    "#{ssl_certs_dir}/client.pem"
+    if (algo = ENV['OCSP_ALGORITHM'])&.empty?
+      "#{ssl_certs_dir}/client.pem"
+    else
+      Pathname.new("#{spec_root}/support/ocsp/#{algo}/server.pem")
+    end
   end
 
   def client_pem_path
@@ -360,6 +375,11 @@ EOT
     'ruby-driver'.freeze
   end
 
+  # Whether FLE tests should be enabled
+  def fle?
+    %w(1 true yes helper).include?(ENV['FLE']&.downcase)
+  end
+
   # AWS IAM user access key id
   def fle_aws_key
     ENV['MONGO_RUBY_DRIVER_AWS_KEY']
@@ -380,6 +400,89 @@ EOT
     ENV['MONGO_RUBY_DRIVER_AWS_ARN']
   end
 
+  # AWS temporary access key id (set by set-temp-creds.sh)
+  def fle_aws_temp_key
+    ENV['CSFLE_AWS_TEMP_ACCESS_KEY_ID']
+  end
+
+  # AWS temporary secret access key (set by set-temp-creds.sh)
+  def fle_aws_temp_secret
+    ENV['CSFLE_AWS_TEMP_SECRET_ACCESS_KEY']
+  end
+
+  # AWS temporary session token (set by set-temp-creds.sh)
+  def fle_aws_temp_session_token
+    ENV['CSFLE_AWS_TEMP_SESSION_TOKEN']
+  end
+
+  def fle_azure_tenant_id
+    ENV['MONGO_RUBY_DRIVER_AZURE_TENANT_ID']
+  end
+
+  def fle_azure_client_id
+    ENV['MONGO_RUBY_DRIVER_AZURE_CLIENT_ID']
+  end
+
+  def fle_azure_client_secret
+    ENV['MONGO_RUBY_DRIVER_AZURE_CLIENT_SECRET']
+  end
+
+  def fle_azure_identity_platform_endpoint
+    ENV['MONGO_RUBY_DRIVER_AZURE_IDENTITY_PLATFORM_ENDPOINT']
+  end
+
+  def fle_azure_key_vault_endpoint
+    ENV['MONGO_RUBY_DRIVER_AZURE_KEY_VAULT_ENDPOINT']
+  end
+
+  def fle_azure_key_name
+    ENV['MONGO_RUBY_DRIVER_AZURE_KEY_NAME']
+  end
+
+  def fle_gcp_email
+    ENV['MONGO_RUBY_DRIVER_GCP_EMAIL']
+  end
+
+  def fle_gcp_private_key
+    ENV['MONGO_RUBY_DRIVER_GCP_PRIVATE_KEY']
+  end
+
+  def fle_gcp_endpoint
+    ENV['MONGO_RUBY_DRIVER_GCP_ENDPOINT']
+  end
+
+  def fle_gcp_project_id
+    ENV['MONGO_RUBY_DRIVER_GCP_PROJECT_ID']
+  end
+
+  def fle_gcp_location
+    ENV['MONGO_RUBY_DRIVER_GCP_LOCATION']
+  end
+
+  def fle_gcp_key_ring
+    ENV['MONGO_RUBY_DRIVER_GCP_KEY_RING']
+  end
+
+  def fle_gcp_key_name
+    ENV['MONGO_RUBY_DRIVER_GCP_KEY_NAME']
+  end
+
+  def fle_gcp_key_version
+    ENV['MONGO_RUBY_DRIVER_GCP_KEY_VERSION']
+  end
+
+  def fle_kmip_endpoint
+    "localhost:5698"
+  end
+
+  def fle_kmip_tls_ca_file
+    "#{spec_root}/../.evergreen/x509gen/ca.pem"
+  end
+
+  def fle_kmip_tls_certificate_key_file
+    "#{spec_root}/../.evergreen/x509gen/client.pem"
+  end
+
   def mongocryptd_port
     if ENV['MONGO_RUBY_DRIVER_MONGOCRYPTD_PORT'] &&
       !ENV['MONGO_RUBY_DRIVER_MONGOCRYPTD_PORT'].empty?
@@ -388,6 +491,30 @@ EOT
     else
       27020
     end
+  end
+
+  def crypt_shared_lib_path
+    if @without_crypt_shared_lib_path
+      nil
+    else
+      ENV['MONGO_RUBY_DRIVER_CRYPT_SHARED_LIB_PATH']
+    end
+  end
+
+  def without_crypt_shared_lib_path
+    saved, @without_crypt_shared_lib_path = @without_crypt_shared_lib_path, true
+    yield
+  ensure
+    @without_crypt_shared_lib_path = saved
+  end
+
+  attr_accessor :crypt_shared_lib_required
+
+  def require_crypt_shared
+    saved, self.crypt_shared_lib_required = crypt_shared_lib_required, true
+    yield
+  ensure
+    self.crypt_shared_lib_required = saved
   end
 
   def auth?
@@ -594,6 +721,10 @@ EOT
         { role: Mongo::Auth::Roles::DATABASE_ADMIN, db: 'retryable-writes-tests' },
         { role: Mongo::Auth::Roles::READ_WRITE, db: 'ts-tests' },
         { role: Mongo::Auth::Roles::DATABASE_ADMIN, db: 'ts-tests' },
+        { role: Mongo::Auth::Roles::READ_WRITE, db: 'ci-tests' },
+        { role: Mongo::Auth::Roles::DATABASE_ADMIN, db: 'ci-tests' },
+        { role: Mongo::Auth::Roles::READ_WRITE, db: 'papi-tests' },
+        { role: Mongo::Auth::Roles::DATABASE_ADMIN, db: 'papi-tests' },
       ]
     )
   end

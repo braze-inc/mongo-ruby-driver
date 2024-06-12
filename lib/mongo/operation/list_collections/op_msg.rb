@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2018-2020 MongoDB Inc.
 #
@@ -31,7 +31,10 @@ module Mongo
         private
 
         def selector(connection)
-          (spec[SELECTOR] || {}).merge(listCollections: 1)
+          (spec[SELECTOR] || {}).merge({
+            listCollections: 1,
+            comment: spec[:comment]
+          }).compact
         end
       end
     end

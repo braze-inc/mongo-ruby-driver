@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'mongo'
 require 'lite_spec_helper'
@@ -8,7 +8,8 @@ describe Mongo::Crypt::ExplicitDecryptionContext do
   require_libmongocrypt
   include_context 'define shared FLE helpers'
 
-  let(:mongocrypt) { Mongo::Crypt::Handle.new(kms_providers, logger: logger) }
+  let(:credentials) { Mongo::Crypt::KMS::Credentials.new(kms_providers) }
+  let(:mongocrypt) { Mongo::Crypt::Handle.new(credentials, logger: logger) }
   let(:context) { described_class.new(mongocrypt, io, value) }
   let(:logger) { nil }
   let(:io) { double("Mongo::ClientEncryption::IO") }
@@ -35,6 +36,36 @@ describe Mongo::Crypt::ExplicitDecryptionContext do
 
     context 'when mongocrypt is initialized with AWS KMS provider options' do
       include_context 'with AWS kms_providers'
+
+      it 'initializes context' do
+        expect do
+          context
+        end.not_to raise_error
+      end
+    end
+
+    context 'when mongocrypt is initialized with Azure KMS provider options' do
+      include_context 'with Azure kms_providers'
+
+      it 'initializes context' do
+        expect do
+          context
+        end.not_to raise_error
+      end
+    end
+
+    context 'when mongocrypt is initialized with GCP KMS provider options' do
+      include_context 'with GCP kms_providers'
+
+      it 'initializes context' do
+        expect do
+          context
+        end.not_to raise_error
+      end
+    end
+
+    context 'when mongocrypt is initialized with KMIP KMS provider options' do
+      include_context 'with KMIP kms_providers'
 
       it 'initializes context' do
         expect do

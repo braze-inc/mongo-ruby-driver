@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'lite_spec_helper'
 
@@ -37,20 +37,6 @@ describe Mongo::Utils do
         'sKey' => :sValue,
         'usKey' => :us_value,
       }
-    end
-  end
-
-  describe '#slice_hash' do
-    it do
-      hash = {'key1' => 1, :key2 => 's', :key3 => true}
-      expect(
-        described_class.slice_hash(hash, 'key1', :key3)
-      ).to eq(
-        {
-          'key1' => 1,
-          :key3 => true
-        }
-      )
     end
   end
 end

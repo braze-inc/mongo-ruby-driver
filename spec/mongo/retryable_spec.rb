@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -39,13 +39,14 @@ class RetryableTestConsumer
   def write
     # This passes a nil session and therefore triggers
     # legacy_write_with_retry code path
-    write_with_retry(session, write_concern) do
+    context = Mongo::Operation::Context.new(client: @client, session: session)
+    write_with_retry(write_concern, context: context) do
       operation.execute
     end
   end
 
   def retry_write_allowed_as_configured?
-    retry_write_allowed?(session, write_concern)
+    write_worker.retry_write_allowed?(session, write_concern)
   end
 end
 
@@ -65,13 +66,16 @@ class ModernRetryableTestConsumer < LegacyRetryableTestConsumer
   def session
     double('session').tap do |session|
       expect(session).to receive(:retry_writes?).and_return(true)
+      allow(session).to receive(:materialize_if_needed)
 
       # mock everything else that is in the way
       i = 1
       allow(session).to receive(:next_txn_num) { i += 1 }
       allow(session).to receive(:in_transaction?).and_return(false)
       allow(session).to receive(:pinned_server)
+      allow(session).to receive(:pinned_connection_global_id)
       allow(session).to receive(:starting_transaction?).and_return(false)
+      allow(session).to receive(:materialize)
     end
   end
 
@@ -83,7 +87,9 @@ end
 class RetryableHost
   include Mongo::Retryable
 
-  public :retry_write_allowed?
+  def retry_write_allowed?(*args)
+    write_worker.retry_write_allowed?(*args)
+  end
 end
 
 describe Mongo::Retryable do
@@ -92,7 +98,15 @@ describe Mongo::Retryable do
     double('operation')
   end
 
-  let(:server) { double('server') }
+  let(:connection) do
+    double('connection')
+  end
+
+  let(:server) do
+    double('server').tap do |server|
+      allow(server).to receive('with_connection').and_yield(connection)
+    end
+  end
 
   let(:max_read_retries) { 1 }
   let(:max_write_retries) { 1 }
@@ -101,6 +115,7 @@ describe Mongo::Retryable do
     double('cluster', next_primary: server).tap do |cluster|
       allow(cluster).to receive(:replica_set?).and_return(true)
       allow(cluster).to receive(:addresses).and_return(['x'])
+      allow(cluster).to receive(:servers)
     end
   end
 
@@ -118,6 +133,17 @@ describe Mongo::Retryable do
 
   let(:retryable) do
     LegacyRetryableTestConsumer.new(operation, cluster, client)
+  end
+
+  let(:session) do
+    double('session').tap do |session|
+      allow(session).to receive(:pinned_connection_global_id).and_return(nil)
+      allow(session).to receive(:materialize_if_needed)
+    end
+  end
+
+  let(:context) do
+    Mongo::Operation::Context.new(client: client, session: session)
   end
 
   before do
@@ -141,9 +167,15 @@ describe Mongo::Retryable do
     context 'when ending_transaction is true' do
       let(:retryable) { RetryableTestConsumer.new(operation, cluster, client) }
 
+      let(:context) do
+        Mongo::Operation::Context.new(client: client, session: nil)
+      end
+
       it 'raises ArgumentError' do
         expect do
-          retryable.write_with_retry(nil, nil, true)
+          retryable.write_with_retry(nil, ending_transaction: true, context: context) do
+            fail 'Expected not to get here'
+          end
         end.to raise_error(ArgumentError, 'Cannot end a transaction without a session')
       end
     end
@@ -155,6 +187,7 @@ describe Mongo::Retryable do
         expect(operation).to receive(:execute).and_raise(Mongo::Error::SocketError).ordered
         expect(retryable).to receive(:select_server).ordered
         expect(operation).to receive(:execute).and_return(true).ordered
+        allow(client).to receive(:read_retry_interval).and_return(0)
       end
 
       it 'executes the operation twice' do
@@ -169,6 +202,7 @@ describe Mongo::Retryable do
         expect(operation).to receive(:execute).and_raise(Mongo::Error::SocketTimeoutError).ordered
         expect(retryable).to receive(:select_server).ordered
         expect(operation).to receive(:execute).and_return(true).ordered
+        allow(client).to receive(:read_retry_interval).and_return(0)
       end
 
       it 'executes the operation twice' do
@@ -350,6 +384,8 @@ describe Mongo::Retryable do
     end
 
     shared_examples 'executes the operation twice' do
+      before { allow(client).to receive(:read_retry_interval).and_return(0) }
+
       it 'executes the operation twice' do
         expect(retryable.write).to be true
       end
@@ -389,7 +425,9 @@ describe Mongo::Retryable do
       end
 
       before do
-        expect(operation).to receive(:execute).and_raise(error).ordered
+        expect(operation).to receive(:execute).and_raise(error).twice
+        allow(client).to receive(:read_retry_interval).and_return(0)
+        allow(cluster).to receive(:scan!)
       end
 
       it 'raises an exception' do
@@ -407,7 +445,9 @@ describe Mongo::Retryable do
       end
 
       before do
-        expect(operation).to receive(:execute).and_raise(error).ordered
+        expect(operation).to receive(:execute).and_raise(error).twice
+        allow(client).to receive(:read_retry_interval).and_return(0)
+        allow(cluster).to receive(:scan!)
       end
 
       it 'raises an exception' do

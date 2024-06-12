@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -76,18 +76,19 @@ module Mongo
       @initial_result = result
       @namespace = result.namespace
       @remaining = limit if limited?
-      @cursor_id = result.cursor_id
+      set_cursor_id(result)
       if @cursor_id.nil?
         raise ArgumentError, 'Cursor id must be present in the result'
       end
+      @connection_global_id = result.connection_global_id
       @options = options
       @session = @options[:session]
+      @explicitly_closed = false
+      @lock = Mutex.new
       unless closed?
         register
-        ObjectSpace.define_finalizer(self, self.class.finalize(kill_spec,
-          cluster,
-          server,
-          @session))
+        ObjectSpace.define_finalizer(self, self.class.finalize(kill_spec(@connection_global_id),
+          cluster))
       end
     end
 
@@ -102,18 +103,16 @@ module Mongo
     #
     # @param [ Cursor::KillSpec ] kill_spec The KillCursor operation specification.
     # @param [ Mongo::Cluster ] cluster The cluster associated with this cursor and its server.
-    # @param [ Mongo::Server ] server The server to send the killCursors operation to.
     #
     # @return [ Proc ] The Finalizer.
     #
     # @api private
-    def self.finalize(kill_spec, cluster, server, session)
+    def self.finalize(kill_spec, cluster)
       unless KillSpec === kill_spec
         raise ArgumentError, "First argument must be a KillSpec: #{kill_spec.inspect}"
       end
       proc do
-        cluster.schedule_kill_cursor(kill_spec, server)
-        session.end_session if session && session.implicit?
+        cluster.schedule_kill_cursor(kill_spec)
       end
     end
 
@@ -167,6 +166,9 @@ module Mongo
         # StopIteration raised by try_next ends this loop.
         loop do
           document = try_next
+          if explicitly_closed?
+            raise Error::InvalidCursorOperation, 'Cursor was explicitly closed'
+          end
           yield document if document
         end
         self
@@ -175,6 +177,9 @@ module Mongo
         # StopIteration raised by try_next ends this loop.
         loop do
           document = try_next
+          if explicitly_closed?
+            raise Error::InvalidCursorOperation, 'Cursor was explicitly closed'
+          end
           documents << document if document
         end
         documents
@@ -254,7 +259,12 @@ module Mongo
     #
     # @since 2.2.0
     def batch_size
-      @view.batch_size && @view.batch_size > 0 ? @view.batch_size : limit
+      value = @view.batch_size && @view.batch_size > 0 ? @view.batch_size : limit
+      if value == 0
+        nil
+      else
+        value
+      end
     end
 
     # Is the cursor closed?
@@ -274,9 +284,6 @@ module Mongo
     # the server.
     #
     # @return [ nil ] Always nil.
-    #
-    # @raise [ Error::OperationFailure ] If the server cursor close fails.
-    # @raise [ Error::SocketError | Error::SocketTimeoutError ] When there is a network error.
     def close
       return if closed?
 
@@ -292,9 +299,14 @@ module Mongo
       end
 
       nil
+    rescue Error::OperationFailure, Error::SocketError, Error::SocketTimeoutError, Error::ServerNotUsable
+      # Errors are swallowed since there is noting can be done by handling them.
     ensure
       end_session
       @cursor_id = 0
+      @lock.synchronize do
+        @explicitly_closed = true
+      end
     end
 
     # Get the parsed collection name.
@@ -367,12 +379,14 @@ module Mongo
     end
 
     # @api private
-    def kill_spec
+    def kill_spec(connection_global_id)
       KillSpec.new(
         cursor_id: id,
         coll_name: collection_name,
         db_name: database.name,
-        service_id: initial_result.connection_description.service_id,
+        connection_global_id: connection_global_id,
+        server_address: server.address,
+        session: @session,
       )
     end
 
@@ -382,6 +396,20 @@ module Mongo
     end
 
     private
+
+    def explicitly_closed?
+      @lock.synchronize do
+        @explicitly_closed
+      end
+    end
+
+    def batch_size_for_get_more
+      if batch_size && use_limit?
+        [batch_size, @remaining].min
+      else
+        batch_size
+      end
+    end
 
     def exhausted?
       limited? ? @remaining <= 0 : false
@@ -405,7 +433,7 @@ module Mongo
         cursor_id: id,
         # 3.2+ servers use batch_size, 3.0- servers use to_return.
         # TODO should to_return be calculated in the operation layer?
-        batch_size: batch_size,
+        batch_size: batch_size_for_get_more,
         to_return: to_return,
         max_time_ms: if view.respond_to?(:max_await_time_ms) &&
           view.max_await_time_ms &&
@@ -416,6 +444,9 @@ module Mongo
           nil
         end,
       }
+      if view.respond_to?(:options) && view.options.is_a?(Hash)
+        spec[:comment] = view.options[:comment] unless view.options[:comment].nil?
+      end
       Operation::GetMore.new(spec)
     end
 
@@ -434,7 +465,7 @@ module Mongo
       # Thus we need to check both @cursor_id and the cursor_id of the result
       # prior to calling unregister here.
       unregister if !closed? && result.cursor_id == 0
-      @cursor_id = result.cursor_id
+      @cursor_id = set_cursor_id(result)
 
       if result.respond_to?(:post_batch_resume_token)
         @post_batch_resume_token = result.post_batch_resume_token
@@ -468,10 +499,28 @@ module Mongo
       context = Operation::Context.new(
         client: client,
         session: @session,
-        service_id: initial_result.connection_description.service_id,
+        connection_global_id: @connection_global_id,
       )
       op.execute(@server, context: context)
     end
+
+    # Sets @cursor_id from the operation result.
+    #
+    # In the operation result cursor id can be represented either as Integer
+    # value or as BSON::Int64. This method ensures that the instance variable
+    # is always of type Integer.
+    #
+    # @param [ Operation::Result ] result The result of the operation.
+    #
+    # @api private
+    def set_cursor_id(result)
+      @cursor_id = if result.cursor_id.is_a?(BSON::Int64)
+                     result.cursor_id.value
+                   else
+                     result.cursor_id
+                   end
+    end
+
   end
 end
 

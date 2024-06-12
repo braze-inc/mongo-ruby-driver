@@ -1,9 +1,10 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
-describe 'Change stream integration', retry: 4 do
+describe 'Change stream integration' do
+  retry_test tries: 4
   require_mri
   max_example_run_time 7
   min_server_fcv '3.6'
@@ -101,7 +102,7 @@ describe 'Change stream integration', retry: 4 do
       it 'watch raises error' do
         expect do
           client['change-stream'].watch
-        end.to raise_error(Mongo::Error::OperationFailure, /10107\b.*Failing command due to 'failCommand' failpoint/)
+        end.to raise_error(Mongo::Error::OperationFailure, /10107\b.*Failing command (due to|via) 'failCommand' failpoint/)
       end
     end
 
@@ -286,7 +287,12 @@ describe 'Change stream integration', retry: 4 do
 
         expect do
           enum.next
-        end.to raise_error(Mongo::Error::OperationFailure, /101\b.*Failing command due to 'failCommand' failpoint/)
+        end.to raise_error(Mongo::Error::OperationFailure, /101\b.*Failing command (due to|via) 'failCommand' failpoint/)
+      end
+
+      after do
+        # TODO see RUBY-3135.
+        clear_fail_point(authorized_collection)
       end
     end
   end
@@ -417,7 +423,7 @@ describe 'Change stream integration', retry: 4 do
 
           expect do
             enum.try_next
-          end.to raise_error(Mongo::Error::OperationFailure, /10107\b.*Failing command due to 'failCommand' failpoint/)
+          end.to raise_error(Mongo::Error::OperationFailure, /10107\b.*Failing command (due to|via) 'failCommand' failpoint/)
         end
       end
 
@@ -444,7 +450,7 @@ describe 'Change stream integration', retry: 4 do
 
           expect do
             enum.try_next
-          end.to raise_error(Mongo::Error::OperationFailure, /10107\b.*Failing command due to 'failCommand' failpoint/)
+          end.to raise_error(Mongo::Error::OperationFailure, /10107\b.*Failing command (due to|via) 'failCommand' failpoint/)
         end
       end
     end

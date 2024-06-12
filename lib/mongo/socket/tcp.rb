@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -46,6 +46,9 @@ module Mongo
       # @since 2.0.0
       # @api private
       def initialize(host, port, timeout, family, options = {})
+        if family.nil?
+          raise ArgumentError, 'family must be specified'
+        end
         super(timeout, options)
         @host, @port = host, port
         @family = family

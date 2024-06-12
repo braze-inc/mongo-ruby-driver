@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -73,10 +73,33 @@ module Mongo
         # @param [ Array<Hash> ] pipeline The pipeline of operations.
         # @param [ Hash ] options The aggregation options.
         #
+        # @option options [ true, false ] :allow_disk_use Set to true if disk
+        #   usage is allowed during the aggregation.
+        # @option options [ Integer ] :batch_size The number of documents to return
+        #   per batch.
+        # @option options [ true, false ] :bypass_document_validation Whether or
+        #   not to skip document level validation.
+        # @option options [ Hash ] :collation The collation to use.
+        # @option options [ Object ] :comment A user-provided
+        #   comment to attach to this command.
+        # @option options [ String ] :hint The index to use for the aggregation.
+        # @option options [ Hash ] :let Mapping of variables to use in the pipeline.
+        #   See the server documentation for details.
+        # @option options [ Integer ] :max_time_ms The maximum amount of time in
+        #   milliseconds to allow the aggregation to run.
+        # @option options [ true, false ] :use_cursor Indicates whether the command
+        #   will request that the server provide results using a cursor. Note that
+        #   as of server version 3.6, aggregations always provide results using a
+        #   cursor and this option is therefore not valid.
+        # @option options [ Session ] :session The session to use.
+        #
         # @since 2.0.0
         def initialize(view, pipeline, options = {})
           @view = view
           @pipeline = pipeline.dup
+          unless Mongo.broken_view_aggregate || view.filter.empty?
+            @pipeline.unshift(:$match => view.filter)
+          end
           @options = BSON::Document.new(options).freeze
         end
 
@@ -108,37 +131,65 @@ module Mongo
           @view.send(:server_selector)
         end
 
-        def aggregate_spec(session)
-          Builder::Aggregation.new(pipeline, view, options.merge(session: session)).specification
+        def aggregate_spec(session, read_preference)
+          Builder::Aggregation.new(
+            pipeline,
+            view,
+            options.merge(session: session, read_preference: read_preference)
+          ).specification
         end
 
         def new(options)
           Aggregation.new(view, pipeline, options)
         end
 
-        def initial_query_op(session)
-          Operation::Aggregate.new(aggregate_spec(session))
+        def initial_query_op(session, read_preference)
+          Operation::Aggregate.new(aggregate_spec(session, read_preference))
         end
 
-        def valid_server?(server)
-          if secondary_ok?
-            true
+        # Return effective read preference for the operation.
+        #
+        # If the pipeline contains $merge or $out, and read preference specified
+        # by user is secondary or secondary_preferred, and target server is below
+        # 5.0, than this method returns primary read preference, because the
+        # aggregation will be routed to primary. Otherwise return the original
+        # read preference.
+        #
+        # See https://github.com/mongodb/specifications/blob/master/source/crud/crud.rst#read-preferences-and-server-selection
+        #
+        # @param [ Server::Connection ] connection The connection which
+        #   will be used for the operation.
+        # @return [ Hash | nil ] read preference hash that should be sent with
+        #   this command.
+        def effective_read_preference(connection)
+          return unless view.read_preference
+          return view.read_preference unless write?
+          return view.read_preference unless [:secondary, :secondary_preferred].include?(view.read_preference[:mode])
+
+          primary_read_preference = {mode: :primary}
+          description = connection.description
+          if description.primary?
+            log_warn("Routing the Aggregation operation to the primary server")
+            primary_read_preference
+          elsif description.mongos? && !description.features.merge_out_on_secondary_enabled?
+            log_warn("Routing the Aggregation operation to the primary server")
+            primary_read_preference
           else
-            description = server.description
-            description.standalone? || description.mongos? || description.primary? || description.load_balancer?
+            view.read_preference
           end
-        end
 
-        def secondary_ok?
-          !write?
         end
 
         def send_initial_query(server, session)
-          unless valid_server?(server)
-            log_warn("Rerouting the Aggregation operation to the primary server - #{server.summary} is not suitable")
-            server = cluster.next_primary(nil, session)
+          server.with_connection do |connection|
+            initial_query_op(
+              session,
+              effective_read_preference(connection)
+            ).execute_with_connection(
+              connection,
+              context: Operation::Context.new(client: client, session: session)
+            )
           end
-          initial_query_op(session).execute(server, context: Operation::Context.new(client: client, session: session))
         end
 
         # Skip, sort, limit, projection are specified as pipeline stages

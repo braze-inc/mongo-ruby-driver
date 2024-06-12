@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -9,6 +9,7 @@ require 'spec_helper'
 describe 'SCRAM-SHA auth mechanism negotiation' do
   min_server_fcv '4.0'
   require_no_external_user
+  require_topology :single, :replica_set, :sharded
   # Test uses global assertions
   clean_slate
 

@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2020 MongoDB Inc.
 #
@@ -100,12 +100,6 @@ module Mongo
     # @return [Float] seconds according to monotonic clock
     module_function def monotonic_time
       Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    end
-
-    # Hash#compact implementation for Ruby 2.3/2.4
-    # Implementation based on activesupport 5.2.3
-    module_function def slice_hash(hash, *keys)
-      keys.each_with_object({}) { |k, res| res[k] = hash[k] if hash.key?(k) }
     end
   end
 end

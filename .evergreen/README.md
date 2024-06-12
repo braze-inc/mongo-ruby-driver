@@ -61,7 +61,7 @@ names must be uppercased.
 For example, to execute Kerberos integration tests which require private
 variables pertanining to the test Kerberos server, you could run:
 
-    ./.evergreen/test-on-docker -d rhel70 RVM_RUBY=ruby-2.4 \
+    ./.evergreen/test-on-docker -d rhel70 RVM_RUBY=ruby-2.5 \
       -s .evergreen/run-tests-kerberos-integration.sh -pa .env.private
 
 The `.env.private` path specifically is listed in .gitignore and .dockerignore
@@ -86,6 +86,14 @@ The following is a list of required environment variables:
 - MONGO_RUBY_DRIVER_AWS_SECRET
 - MONGO_RUBY_DRIVER_AWS_REGION
 - MONGO_RUBY_DRIVER_AWS_ARN
+- MONGO_RUBY_DRIVER_AZURE_TENANT_ID
+- MONGO_RUBY_DRIVER_AZURE_CLIENT_ID
+- MONGO_RUBY_DRIVER_AZURE_CLIENT_SECRET
+- MONGO_RUBY_DRIVER_AZURE_IDENTITY_PLATFORM_ENDPOINT
+- MONGO_RUBY_DRIVER_AZURE_KEY_VAULT_ENDPOINT
+- MONGO_RUBY_DRIVER_AZURE_KEY_NAME
+- MONGO_RUBY_DRIVER_GCP_EMAIL
+- MONGO_RUBY_DRIVER_GCP_PRIVATE_KEY
 
 Here's an example of how to run FLE tests in Docker:
 

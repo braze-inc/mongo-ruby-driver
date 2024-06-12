@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 require 'bson'
@@ -22,13 +22,15 @@ describe 'Auto Encryption' do
       SpecConfig.instance.test_options.merge(
         auto_encryption_options: {
           kms_providers: kms_providers,
+          kms_tls_options: kms_tls_options,
           key_vault_namespace: key_vault_namespace,
           schema_map: local_schema,
           bypass_auto_encryption: bypass_auto_encryption,
           # Spawn mongocryptd on non-default port for sharded cluster tests
           extra_options: extra_options,
         },
-        database: 'auto_encryption'
+        database: 'auto_encryption',
+        max_pool_size: max_pool_size
       ),
     )
   end
@@ -36,6 +38,10 @@ describe 'Auto Encryption' do
   let(:client) { authorized_client.use('auto_encryption') }
 
   let(:bypass_auto_encryption) { false }
+
+  let(:max_pool_size) do
+    Mongo::Server::ConnectionPool::DEFAULT_MAX_SIZE
+  end
 
   let(:encrypted_ssn_binary) do
     BSON::Binary.new(Base64.decode64(encrypted_ssn), :ciphertext)
@@ -78,6 +84,12 @@ describe 'Auto Encryption' do
     end
   end
 
+  shared_context 'limited connection pool' do
+    let(:max_pool_size) do
+      1
+    end
+  end
+
   before(:each) do
     client['users'].drop
     key_vault_collection.drop
@@ -96,6 +108,68 @@ describe 'Auto Encryption' do
       context 'with schema map' do
         include_context 'schema map in client options'
         it_behaves_like 'it performs an encrypted command'
+
+        context 'with limited connection pool' do
+          include_context 'limited connection pool'
+          it_behaves_like 'it performs an encrypted command'
+        end
+      end
+    end
+
+    context 'with Azure KMS provider' do
+      include_context 'with Azure kms_providers'
+
+      context 'with validator' do
+        include_context 'jsonSchema validator on collection'
+        it_behaves_like 'it performs an encrypted command'
+      end
+
+      context 'with schema map' do
+        include_context 'schema map in client options'
+        it_behaves_like 'it performs an encrypted command'
+
+        context 'with limited connection pool' do
+          include_context 'limited connection pool'
+          it_behaves_like 'it performs an encrypted command'
+        end
+      end
+    end
+
+    context 'with GCP KMS provider' do
+      include_context 'with GCP kms_providers'
+
+      context 'with validator' do
+        include_context 'jsonSchema validator on collection'
+        it_behaves_like 'it performs an encrypted command'
+      end
+
+      context 'with schema map' do
+        include_context 'schema map in client options'
+        it_behaves_like 'it performs an encrypted command'
+
+        context 'with limited connection pool' do
+          include_context 'limited connection pool'
+          it_behaves_like 'it performs an encrypted command'
+        end
+      end
+    end
+
+    context 'with KMIP KMS provider' do
+      include_context 'with KMIP kms_providers'
+
+      context 'with validator' do
+        include_context 'jsonSchema validator on collection'
+        it_behaves_like 'it performs an encrypted command'
+      end
+
+      context 'with schema map' do
+        include_context 'schema map in client options'
+        it_behaves_like 'it performs an encrypted command'
+
+        context 'with limited connection pool' do
+          include_context 'limited connection pool'
+          it_behaves_like 'it performs an encrypted command'
+        end
       end
     end
 
@@ -110,6 +184,11 @@ describe 'Auto Encryption' do
       context 'with schema map' do
         include_context 'schema map in client options'
         it_behaves_like 'it performs an encrypted command'
+
+        context 'with limited connection pool' do
+          include_context 'limited connection pool'
+          it_behaves_like 'it performs an encrypted command'
+        end
       end
     end
   end
@@ -446,6 +525,22 @@ describe 'Auto Encryption' do
         it_behaves_like 'it obeys bypass_auto_encryption option'
       end
 
+      context 'with Azure KMS provider' do
+        include_context 'with Azure kms_providers'
+        it_behaves_like 'it obeys bypass_auto_encryption option'
+      end
+
+      context 'with GCP KMS provider' do
+        include_context 'with GCP kms_providers'
+        it_behaves_like 'it obeys bypass_auto_encryption option'
+      end
+
+      context 'with KMIP KMS provider' do
+        include_context 'with KMIP kms_providers'
+        it_behaves_like 'it obeys bypass_auto_encryption option'
+      end
+
+
       context 'with local KMS provider and ' do
         include_context 'with local kms_providers'
         it_behaves_like 'it obeys bypass_auto_encryption option'
@@ -490,6 +585,54 @@ describe 'Auto Encryption' do
           # Auto-encryption with key alt names only works with random encryption,
           # so it will not generate the same result on every test run.
           expect(document['ssn']).to be_ciphertext
+        end
+      end
+
+      context 'with Azure KMS provider' do
+        include_context 'with Azure kms_providers and key alt names'
+        it 'encrypts the ssn field' do
+          expect(result).to be_ok
+          expect(result.inserted_ids.length).to eq(1)
+
+          id = result.inserted_ids.first
+
+          document = client['users'].find(_id: id).first
+          document.should_not be_nil
+          # Auto-encryption with key alt names only works with random encryption,
+          # so it will not generate the same result on every test run.
+          expect(document['ssn']).to be_ciphertext
+        end
+
+        context 'with GCP KMS provider' do
+          include_context 'with GCP kms_providers and key alt names'
+          it 'encrypts the ssn field' do
+            expect(result).to be_ok
+            expect(result.inserted_ids.length).to eq(1)
+
+            id = result.inserted_ids.first
+
+            document = client['users'].find(_id: id).first
+            document.should_not be_nil
+            # Auto-encryption with key alt names only works with random encryption,
+            # so it will not generate the same result on every test run.
+            expect(document['ssn']).to be_ciphertext
+          end
+        end
+
+        context 'with KMIP KMS provider' do
+          include_context 'with KMIP kms_providers and key alt names'
+          it 'encrypts the ssn field' do
+            expect(result).to be_ok
+            expect(result.inserted_ids.length).to eq(1)
+
+            id = result.inserted_ids.first
+
+            document = client['users'].find(_id: id).first
+            document.should_not be_nil
+            # Auto-encryption with key alt names only works with random encryption,
+            # so it will not generate the same result on every test run.
+            expect(document['ssn']).to be_ciphertext
+          end
         end
       end
 
@@ -548,7 +691,7 @@ describe 'Auto Encryption' do
       include_context 'encrypted document in collection'
 
       let(:result) do
-        encryption_client['users'].update_one({ ssn: ssn }, { ssn: '098-765-4321' })
+        encryption_client['users'].replace_one({ ssn: ssn }, { ssn: '098-765-4321' })
       end
 
       it 'encrypts the ssn field' do

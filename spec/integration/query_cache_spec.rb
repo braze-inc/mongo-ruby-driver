@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -21,11 +21,11 @@ describe 'QueryCache' do
     # these tests.
     #
     # Other session leaks will be detected and addressed as part of RUBY-2391.
-    SessionRegistry.instance.clear_registry
+    Mrss::SessionRegistry.instance.clear_registry
   end
 
   after do
-    SessionRegistry.instance.verify_sessions_ended!
+    Mrss::SessionRegistry.instance.verify_sessions_ended!
   end
 
   let(:subscriber) { Mrss::EventSubscriber.new }
@@ -86,7 +86,6 @@ describe 'QueryCache' do
   end
 
   describe 'query with multiple batches' do
-    min_server_fcv '3.2'
 
     before do
       102.times { |i| authorized_collection.insert_one(_id: i) }
@@ -193,7 +192,7 @@ describe 'QueryCache' do
     min_server_fcv '3.6'
 
     before do
-      authorized_client['test'].drop
+      authorized_client['test', write_concern: { w: :majority }].drop
     end
 
     context 'when two queries have same read concern' do
@@ -345,17 +344,68 @@ describe 'QueryCache' do
 
         it 'uses the cache' do
           results_limit_5 = authorized_collection.find.limit(5).to_a
+          results_limit_negative_5 = authorized_collection.find.limit(-5).to_a
           results_limit_3 = authorized_collection.find.limit(3).to_a
+          results_limit_negative_3 = authorized_collection.find.limit(-3).to_a
           results_no_limit = authorized_collection.find.to_a
+          results_limit_0 = authorized_collection.find.limit(0).to_a
+
 
           expect(results_limit_5.length).to eq(5)
           expect(results_limit_5.map { |r| r["test"] }).to eq([0, 1, 2, 3, 4])
 
+          expect(results_limit_negative_5.length).to eq(5)
+          expect(results_limit_negative_5.map { |r| r["test"] }).to eq([0, 1, 2, 3, 4])
+
           expect(results_limit_3.length).to eq(3)
           expect(results_limit_3.map { |r| r["test"] }).to eq([0, 1, 2])
 
+          expect(results_limit_negative_3.length).to eq(3)
+          expect(results_limit_negative_3.map { |r| r["test"] }).to eq([0, 1, 2])
+
           expect(results_no_limit.length).to eq(10)
           expect(results_no_limit.map { |r| r["test"] }).to eq([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+
+          expect(results_limit_0.length).to eq(10)
+          expect(results_limit_0.map { |r| r["test"] }).to eq([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+
+          expect(events.length).to eq(1)
+        end
+      end
+
+      context 'when the first query has a 0 limit' do
+        before do
+          authorized_collection.find.limit(0).to_a
+        end
+
+        it 'uses the cache' do
+          results_limit_5 = authorized_collection.find.limit(5).to_a
+          results_limit_negative_5 = authorized_collection.find.limit(-5).to_a
+          results_limit_3 = authorized_collection.find.limit(3).to_a
+          results_limit_negative_3 = authorized_collection.find.limit(-3).to_a
+          results_no_limit = authorized_collection.find.to_a
+          results_limit_0 = authorized_collection.find.limit(0).to_a
+
+          expect(results_limit_5.length).to eq(5)
+          expect(results_limit_5.map { |r| r["test"] }).to eq([0, 1, 2, 3, 4])
+
+          expect(results_limit_negative_5.length).to eq(5)
+          expect(results_limit_negative_5.map { |r| r["test"] }).to eq([0, 1, 2, 3, 4])
+
+
+          expect(results_limit_3.length).to eq(3)
+          expect(results_limit_3.map { |r| r["test"] }).to eq([0, 1, 2])
+
+          expect(results_limit_negative_3.length).to eq(3)
+          expect(results_limit_negative_3.map { |r| r["test"] }).to eq([0, 1, 2])
+
+
+          expect(results_no_limit.length).to eq(10)
+          expect(results_no_limit.map { |r| r["test"] }).to eq([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+
+
+          expect(results_limit_0.length).to eq(10)
+          expect(results_limit_0.map { |r| r["test"] }).to eq([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
 
           expect(events.length).to eq(1)
         end
@@ -391,8 +441,116 @@ describe 'QueryCache' do
           end
         end
 
+        context 'and two queries are performed with a larger negative limit' do
+          it 'uses the query cache for the third query' do
+            results1 = authorized_collection.find.limit(-3).to_a
+            results2 = authorized_collection.find.limit(-3).to_a
+
+            expect(results1.length).to eq(3)
+            expect(results1.map { |r| r["test"] }).to eq([0, 1, 2])
+
+            expect(results2.length).to eq(3)
+            expect(results2.map { |r| r["test"] }).to eq([0, 1, 2])
+
+            expect(events.length).to eq(2)
+          end
+        end
+
         context 'and the second query has a smaller limit' do
           let(:results) { authorized_collection.find.limit(1).to_a }
+
+          it 'uses the cached query' do
+            expect(results.count).to eq(1)
+            expect(results.first["test"]).to eq(0)
+            expect(events.length).to eq(1)
+          end
+        end
+
+        context 'and the second query has a smaller negative limit' do
+          let(:results) { authorized_collection.find.limit(-1).to_a }
+
+          it 'uses the cached query' do
+            expect(results.count).to eq(1)
+            expect(results.first["test"]).to eq(0)
+            expect(events.length).to eq(1)
+          end
+        end
+
+        context 'and the second query has no limit' do
+          it 'queries again' do
+            expect(authorized_collection.find.to_a.count).to eq(10)
+            expect(events.length).to eq(2)
+          end
+        end
+      end
+
+      context 'when the first query has a negative limit' do
+        before do
+          authorized_collection.find.limit(-2).to_a
+        end
+
+        context 'and the second query has a larger limit' do
+          let(:results) { authorized_collection.find.limit(3).to_a }
+
+          it 'queries again' do
+            expect(results.length).to eq(3)
+            expect(results.map { |result| result["test"] }).to eq([0, 1, 2])
+            expect(events.length).to eq(2)
+          end
+        end
+
+        context 'and the second query has a larger negative limit' do
+          let(:results) { authorized_collection.find.limit(-3).to_a }
+
+          it 'queries again' do
+            expect(results.length).to eq(3)
+            expect(results.map { |result| result["test"] }).to eq([0, 1, 2])
+            expect(events.length).to eq(2)
+          end
+        end
+
+        context 'and two queries are performed with a larger limit' do
+          it 'uses the query cache for the third query' do
+            results1 = authorized_collection.find.limit(3).to_a
+            results2 = authorized_collection.find.limit(3).to_a
+
+            expect(results1.length).to eq(3)
+            expect(results1.map { |r| r["test"] }).to eq([0, 1, 2])
+
+            expect(results2.length).to eq(3)
+            expect(results2.map { |r| r["test"] }).to eq([0, 1, 2])
+
+            expect(events.length).to eq(2)
+          end
+        end
+
+        context 'and two queries are performed with a larger negative limit' do
+          it 'uses the query cache for the third query' do
+            results1 = authorized_collection.find.limit(-3).to_a
+            results2 = authorized_collection.find.limit(-3).to_a
+
+            expect(results1.length).to eq(3)
+            expect(results1.map { |r| r["test"] }).to eq([0, 1, 2])
+
+            expect(results2.length).to eq(3)
+            expect(results2.map { |r| r["test"] }).to eq([0, 1, 2])
+
+            expect(events.length).to eq(2)
+          end
+        end
+
+        context 'and the second query has a smaller limit' do
+          let(:results) { authorized_collection.find.limit(1).to_a }
+
+          it 'uses the cached query' do
+            expect(results.count).to eq(1)
+            expect(results.first["test"]).to eq(0)
+            expect(events.length).to eq(1)
+          end
+        end
+
+        context 'and the second query has a smaller negative limit' do
+          let(:results) { authorized_collection.find.limit(-1).to_a }
 
           it 'uses the cached query' do
             expect(results.count).to eq(1)
@@ -534,7 +692,7 @@ describe 'QueryCache' do
     end
 
     [:find_one_and_delete, :find_one_and_replace, :find_one_and_update,
-      :update_one, :replace_one].each do |method|
+      :replace_one].each do |method|
       context "when updating with #{method}" do
         context 'when updating and querying from same collection' do
           before do
@@ -562,28 +720,30 @@ describe 'QueryCache' do
       end
     end
 
-    context 'when updating with #update_many' do
-      context 'when updating and querying from same collection' do
-        before do
-          authorized_collection.find.to_a
-          authorized_collection.update_many({ field: 'value' }, { "$inc" => { :field =>  1 } })
+    [:update_one, :update_many].each do |method|
+      context "when updating with ##{method}" do
+        context 'when updating and querying from same collection' do
+          before do
+            authorized_collection.find.to_a
+            authorized_collection.send(method, { field: 'value' }, { "$inc" => { :field =>  1 } })
+          end
+
+          it 'queries again' do
+            authorized_collection.find.to_a
+            expect(events.length).to eq(2)
+          end
         end
 
-        it 'queries again' do
-          authorized_collection.find.to_a
-          expect(events.length).to eq(2)
-        end
-      end
+        context 'when updating and querying from different collections' do
+          before do
+            authorized_collection.find.to_a
+            authorized_client['different_collection'].send(method, { field: 'value' }, { "$inc" => { :field =>  1 } })
+          end
 
-      context 'when updating and querying from different collections' do
-        before do
-          authorized_collection.find.to_a
-          authorized_client['different_collection'].update_many({ field: 'value' }, { "$inc" => { :field =>  1 } })
-        end
-
-        it 'uses the cached query' do
-          authorized_collection.find.to_a
-          expect(events.length).to eq(1)
+          it 'uses the cached query' do
+            authorized_collection.find.to_a
+            expect(events.length).to eq(1)
+          end
         end
       end
     end
@@ -913,7 +1073,7 @@ describe 'QueryCache' do
     end
 
     [:find_one_and_delete, :find_one_and_replace, :find_one_and_update,
-      :update_one, :replace_one].each do |method|
+      :replace_one].each do |method|
       context "when #{method} is performed on another collection" do
         before do
           aggregation.to_a
@@ -927,15 +1087,17 @@ describe 'QueryCache' do
       end
     end
 
-    context 'when update_many is performed on another collection' do
-      before do
-        aggregation.to_a
-        authorized_client['different_collection'].update_many({ field: 'value' }, { "$inc" => { :field =>  1 } })
-        aggregation.to_a
-      end
+    [:update_one, :update_many].each do |method|
+      context 'when update_many is performed on another collection' do
+        before do
+          aggregation.to_a
+          authorized_client['different_collection'].send(method, { field: 'value' }, { "$inc" => { :field =>  1 } })
+          aggregation.to_a
+        end
 
-      it 'queries again' do
-        expect(events.length).to eq(2)
+        it 'queries again' do
+          expect(events.length).to eq(2)
+        end
       end
     end
 
@@ -1088,6 +1250,94 @@ describe 'QueryCache' do
       end
 
       include_examples 'retrieves full result set on second iteration'
+    end
+  end
+
+  describe 'concurrent queries with multiple batches' do
+
+    before do
+      102.times { |i| authorized_collection.insert_one(_id: i) }
+    end
+
+    # The query cache table is stored in thread local storage, so even though
+    # we executed the same queries in the first thread (and waited for them to
+    # finish), that query is going to be executed again (only once) in the
+    # second thread.
+    it "uses separate cache tables per thread" do
+      thread1 = Thread.new do
+        Mongo::QueryCache.cache do
+          authorized_collection.find.to_a
+          authorized_collection.find.to_a
+          authorized_collection.find.to_a
+          authorized_collection.find.to_a
+        end
+      end
+      thread1.join
+      thread2 = Thread.new do
+        Mongo::QueryCache.cache do
+          authorized_collection.find.to_a
+          authorized_collection.find.to_a
+          authorized_collection.find.to_a
+          authorized_collection.find.to_a
+        end
+      end
+      thread2.join
+
+      expect(subscriber.command_started_events('find').length).to eq(2)
+      expect(subscriber.command_started_events('getMore').length).to eq(2)
+    end
+
+    it "is able to query concurrently" do
+      wait_for_first_thread = true
+      wait_for_second_thread = true
+      threads = []
+      first_thread_docs = []
+      threads << Thread.new do
+        Mongo::QueryCache.cache do
+          # 1. iterate first batch
+          authorized_collection.find.each_with_index do |doc, i|
+            # 2. verify that we're getting all of the correct documents
+            first_thread_docs << doc
+            expect(doc).to eq({ "_id" => i })
+            if i == 50
+              # 2. check that there hasn't been a getmore
+              expect(subscriber.command_started_events('getMore').length).to eq(0)
+              # 3. mark second thread ready to start
+              wait_for_first_thread = false
+              # 4. wait for second thread
+              sleep 0.1 while wait_for_second_thread
+              # 5. verify that the other thread sent a getmore
+              expect(subscriber.command_started_events('getMore').length).to eq(1)
+            end
+            # 6. finish iterating the batch
+          end
+          # 7. verify that it still caches the query
+          authorized_collection.find.to_a
+        end
+      end
+
+      threads << Thread.new do
+        Mongo::QueryCache.cache do
+          # 1. wait for the first thread to finish first batch iteration
+          sleep 0.1 while wait_for_first_thread
+          # 2. iterate the entire result set
+          authorized_collection.find.each_with_index do |doc, i|
+            # 3. verify documnents
+            expect(doc).to eq({ "_id" => i })
+          end
+          # 4. verify get more
+          expect(subscriber.command_started_events('getMore').length).to eq(1)
+          # 5. mark second thread done
+          wait_for_second_thread = false
+          # 6. verify that it still caches the query
+          authorized_collection.find.to_a
+        end
+      end
+
+      threads.map(&:join)
+      expect(first_thread_docs.length).to eq(102)
+      expect(subscriber.command_started_events('find').length).to eq(2)
+      expect(subscriber.command_started_events('getMore').length).to eq(2)
     end
   end
 end

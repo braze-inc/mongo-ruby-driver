@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -59,8 +59,8 @@ describe Mongo::Server::Monitor::Connection do
     monitor.connection.tap do |connection|
       expect(connection).not_to be nil
 
-      deadline = Time.now + 5
-      while Time.now < deadline
+      deadline = Mongo::Utils.monotonic_time + 5
+      while Mongo::Utils.monotonic_time < deadline
         if connection.send(:socket)
           break
         end
@@ -132,6 +132,28 @@ describe Mongo::Server::Monitor::Connection do
 
       it 'uses the connect_timeout as the socket_timeout' do
         expect(connection.send(:socket).timeout).to eq(10)
+      end
+    end
+  end
+
+  describe '#connect!' do
+
+    let(:options) do
+      SpecConfig.instance.test_options.merge(
+        app_metadata: monitor_app_metadata,
+      )
+    end
+
+    context 'when address resolution fails' do
+      let(:connection) { described_class.new(server.address, options) }
+
+      it 'propagates the exception' do
+        connection
+
+        expect(Socket).to receive(:getaddrinfo).and_raise(SocketError.new('Test exception'))
+        lambda do
+          connection.connect!
+        end.should raise_error(SocketError, 'Test exception')
       end
     end
   end

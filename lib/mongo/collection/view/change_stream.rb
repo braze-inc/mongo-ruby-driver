@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2017-2020 MongoDB Inc.
 #
@@ -70,10 +70,35 @@ module Mongo
         # @param [ Array<Hash> ] pipeline The pipeline of operators to filter the change notifications.
         # @param [ Hash ] options The change stream options.
         #
-        # @option options [ String ] :full_document Allowed values: 'default', 'updateLookup'. Defaults to 'default'.
-        #   When set to 'updateLookup', the change notification for partial updates will include both a delta
-        #   describing the changes to the document, as well as a copy of the entire document that was changed
-        #   from some time after the change occurred.
+        # @option options [ String ] :full_document Allowed values: nil, 'default',
+        #   'updateLookup', 'whenAvailable', 'required'.
+        #
+        #   The default is to not send a value (i.e. nil), which is equivalent to
+        #   'default'. By default, the change notification for partial updates will
+        #   include a delta describing the changes to the document.
+        #
+        #   When set to 'updateLookup', the change notification for partial updates
+        #   will include both a delta describing the changes to the document as well
+        #   as a copy of the entire document that was changed from some time after
+        #   the change occurred.
+        #
+        #   When set to 'whenAvailable', configures the change stream to return the
+        #   post-image of the modified document for replace and update change events
+        #   if the post-image for this event is available.
+        #
+        #   When set to 'required', the same behavior as 'whenAvailable' except that
+        #   an error is raised if the post-image is not available.
+        # @option options [ String ] :full_document_before_change Allowed values: nil,
+        #   'whenAvailable', 'required', 'off'.
+        #
+        #   The default is to not send a value (i.e. nil), which is equivalent to 'off'.
+        #
+        #   When set to 'whenAvailable', configures the change stream to return the
+        #   pre-image of the modified document for replace, update, and delete change
+        #   events if it is available.
+        #
+        #   When set to 'required', the same behavior as 'whenAvailable' except that
+        #   an error is raised if the pre-image is not available.
         # @option options [ BSON::Document, Hash ] :resume_after Specifies the logical starting point for the
         #   new change stream.
         # @option options [ Integer ] :max_await_time_ms The maximum amount of time for the server to wait
@@ -88,6 +113,13 @@ module Mongo
         #   option takes a resume token and starts a new change stream returning the first
         #   notification after the token. This will allow users to watch collections that have been
         #   dropped and recreated or newly renamed collections without missing any notifications.
+        # @option options [ Object ] :comment A user-provided
+        #   comment to attach to this command.
+        # @option options [ Boolean ] :show_expanded_events Enables the server to
+        #   send the 'expanded' list of change stream events. The list of additional
+        #   events included with this flag set are: createIndexes, dropIndexes,
+        #   modify, create, shardCollection, reshardCollection,
+        #   refineCollectionShardKey.
         #
         #   The server will report an error if `startAfter` and `resumeAfter` are both specified.
         #
@@ -132,7 +164,7 @@ module Mongo
             document = try_next
             yield document if document
           end
-        rescue StopIteration => e
+        rescue StopIteration
           return self
         end
 
@@ -206,7 +238,7 @@ module Mongo
           unless closed?
             begin
               @cursor.close
-            rescue Error::OperationFailure, Error::SocketError, Error::SocketTimeoutError
+            rescue Error::OperationFailure, Error::SocketError, Error::SocketTimeoutError, Error::MissingConnection
               # ignore
             end
             @cursor = nil
@@ -275,20 +307,22 @@ module Mongo
           start_at_operation_time = nil
           start_at_operation_time_supported = nil
           @cursor = read_with_retry_cursor(session, server_selector, view) do |server|
-            start_at_operation_time_supported = server.description.server_version_gte?('4.0')
+            server.with_connection do |connection|
+              start_at_operation_time_supported = connection.description.server_version_gte?('4.0')
 
-            result = send_initial_query(server, session)
-            if doc = result.replies.first && result.replies.first.documents.first
-              start_at_operation_time = doc['operationTime']
-            else
-              # The above may set @start_at_operation_time to nil
-              # if it was not in the document for some reason,
-              # for consistency set it to nil here as well.
-              # NB: since this block may be executed more than once, each
-              # execution must write to start_at_operation_time either way.
-              start_at_operation_time = nil
+              result = send_initial_query(connection, session)
+              if doc = result.replies.first && result.replies.first.documents.first
+                start_at_operation_time = doc['operationTime']
+              else
+                # The above may set @start_at_operation_time to nil
+                # if it was not in the document for some reason,
+                # for consistency set it to nil here as well.
+                # NB: since this block may be executed more than once, each
+                # execution must write to start_at_operation_time either way.
+                start_at_operation_time = nil
+              end
+              result
             end
-            result
           end
           @start_at_operation_time = start_at_operation_time
           @start_at_operation_time_supported = start_at_operation_time_supported
@@ -298,8 +332,8 @@ module Mongo
           [{ '$changeStream' => change_doc }] + @change_stream_filters
         end
 
-        def aggregate_spec(session)
-          super(session).tap do |spec|
+        def aggregate_spec(session, read_preference)
+          super(session, read_preference).tap do |spec|
             spec[:selector][:aggregate] = 1 unless for_collection?
           end
         end
@@ -308,6 +342,14 @@ module Mongo
           {}.tap do |doc|
             if @options[:full_document]
               doc[:fullDocument] = @options[:full_document]
+            end
+
+            if @options[:full_document_before_change]
+              doc[:fullDocumentBeforeChange] = @options[:full_document_before_change]
+            end
+
+            if @options.key?(:show_expanded_events)
+              doc[:showExpandedEvents] = @options[:show_expanded_events]
             end
 
             if resuming?
@@ -348,8 +390,12 @@ module Mongo
           end
         end
 
-        def send_initial_query(server, session)
-          initial_query_op(session).execute(server, context: Operation::Context.new(client: client, session: session))
+        def send_initial_query(connection, session)
+          initial_query_op(session, view.read_preference)
+            .execute_with_connection(
+              connection,
+              context: Operation::Context.new(client: client, session: session),
+            )
         end
 
         def time_to_bson_timestamp(time)

@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -40,6 +40,10 @@ describe Mongo::Collection::View::MapReduce do
   end
 
   let(:view) do
+    authorized_client.cluster.servers.map do |server|
+      server.pool.ready
+    end
+
     Mongo::Collection::View.new(authorized_collection, selector, view_options)
   end
 
@@ -58,6 +62,14 @@ describe Mongo::Collection::View::MapReduce do
 
   let(:map_reduce) do
     described_class.new(view, map, reduce, options)
+  end
+
+  describe '#initialize' do
+    it 'warns of deprecation' do
+      Mongo::Logger.logger.should receive(:warn).with('MONGODB | The map_reduce operation is deprecated, please use the aggregation pipeline instead')
+
+      map_reduce
+    end
   end
 
   describe '#map_function' do
@@ -585,6 +597,7 @@ describe Mongo::Collection::View::MapReduce do
       context 'when the server is not valid for writing' do
         clean_slate
         require_warning_clean
+        require_no_linting
 
         before do
           stop_monitoring(authorized_client)
@@ -607,6 +620,10 @@ describe Mongo::Collection::View::MapReduce do
           end
 
           let(:view) do
+            authorized_client.cluster.servers.map do |server|
+              server.pool.ready
+            end
+
             Mongo::Collection::View.new(collection, selector, view_options)
           end
 
@@ -666,13 +683,19 @@ describe Mongo::Collection::View::MapReduce do
       context 'when the server is a valid for writing' do
         clean_slate
         require_warning_clean
+        require_no_linting
 
         before do
           stop_monitoring(authorized_client)
         end
 
         it 'does not reroute the operation to a primary' do
-          expect(Mongo::Logger.logger).not_to receive(:warn)
+          # We produce a deprecation warning, but there shouldn't be
+          # the reroute warning.
+          expect(Mongo::Logger.logger).to receive(:warn).once do |msg|
+            expect(msg).not_to include('Rerouting the MapReduce operation to the primary server')
+          end
+
           map_reduce.to_a
         end
       end
@@ -861,6 +884,22 @@ describe Mongo::Collection::View::MapReduce do
               map_reduce.to_a
             }.to raise_exception(Mongo::Error::UnsupportedCollation)
           end
+        end
+      end
+    end
+  end
+
+  describe '#map_reduce_spec' do
+    context 'when read preference is given' do
+      let(:view_options) do
+        { read: {mode: :secondary} }
+      end
+
+      context 'selector' do
+        # For compatibility with released versions of Mongoid, this method
+        # must return read preference under the :read key.
+        it 'contains read preference' do
+          map_reduce_spec[:selector][:read].should == {'mode' => :secondary}
         end
       end
     end

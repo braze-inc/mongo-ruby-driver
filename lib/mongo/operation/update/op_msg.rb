@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2018-2020 MongoDB Inc.
 #
@@ -37,7 +37,9 @@ module Mongo
           {
             update: coll_name,
             ordered: ordered?,
-          }
+            let: spec[:let],
+            comment: spec[:comment]
+          }.compact
         end
 
         def message(connection)

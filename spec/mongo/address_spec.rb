@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -228,6 +228,13 @@ describe Mongo::Address do
 
     context 'when providing a DNS entry that resolves to both IPv6 and IPv4' do
 
+      # In JRuby 9.3.2.0 Socket::PF_INET6 is nil, causing IPv6 tests to fail.
+      # https://github.com/jruby/jruby/issues/7069
+      # JRuby 9.2 works correctly, this test is skipped on all JRuby versions
+      # because we intend to remove JRuby support altogether and therefore
+      # adding logic to condition on JRuby versions does not make sense.
+      fails_on_jruby
+
       let(:custom_hostname) do
         'not_localhost'
       end
@@ -286,6 +293,12 @@ describe Mongo::Address do
             expect(socket.getsockopt(Socket::IPPROTO_TCP, Socket::TCP_KEEPIDLE).int).to be <= 120
           end
         end
+
+        if Socket.const_defined?(:TCP_USER_TIMEOUT)
+          it 'sets the socket TCP_KEEPIDLE option' do
+            expect(socket.getsockopt(Socket::IPPROTO_TCP, Socket::TCP_USER_TIMEOUT).int).to be <= 210
+          end
+        end
       end
     end
 
@@ -298,7 +311,7 @@ describe Mongo::Address do
         RSpec::Mocks.with_temporary_scope do
           resolved_address = double('address')
           # This test's expectation
-          expect(resolved_address).to receive(:socket).with(0, connect_timeout: 10)
+          expect(resolved_address).to receive(:socket).with(0, {connect_timeout: 10})
 
           expect(Mongo::Address::IPv4).to receive(:new).and_return(resolved_address)
 

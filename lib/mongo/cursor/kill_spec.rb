@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2021 MongoDB Inc.
 #
@@ -25,14 +25,52 @@ module Mongo
     # @api private
     class KillSpec
 
-      def initialize(cursor_id:, coll_name:, db_name:, service_id:)
+      def initialize(
+        cursor_id:,
+        coll_name:,
+        db_name:,
+        connection_global_id:,
+        server_address:,
+        session:
+      )
         @cursor_id = cursor_id
         @coll_name = coll_name
         @db_name = db_name
-        @service_id = service_id
+        @connection_global_id = connection_global_id
+        @server_address = server_address
+        @session = session
       end
 
-      attr_reader :cursor_id, :coll_name, :db_name, :service_id
+      attr_reader :cursor_id,
+      :coll_name,
+      :db_name,
+      :connection_global_id,
+      :server_address,
+      :session
+
+      def ==(other)
+        cursor_id == other.cursor_id &&
+          coll_name == other.coll_name &&
+          db_name == other.db_name &&
+          connection_global_id == other.connection_global_id &&
+          server_address == other.server_address &&
+          session == other.session
+      end
+
+      def eql?(other)
+        self.==(other)
+      end
+
+      def hash
+        [
+          cursor_id,
+          coll_name,
+          db_name,
+          connection_global_id,
+          server_address,
+          session,
+        ].compact.hash
+      end
     end
   end
 end

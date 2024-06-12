@@ -1,17 +1,24 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'lite_spec_helper'
 
 describe Mongo::URI::SRVProtocol do
   require_external_connectivity
   clean_slate_for_all_if_possible
+  retry_test
 
   let(:scheme) { 'mongodb+srv://' }
   let(:uri) { described_class.new(string) }
 
   let(:client) do
     new_local_client_nmio(string)
+  end
+
+  shared_examples "roundtrips string" do
+    it "returns the correct string for the uri" do
+      expect(uri.to_s).to eq(URI::DEFAULT_PARSER.unescape(string))
+    end
   end
 
   describe 'invalid uris' do
@@ -263,13 +270,80 @@ describe Mongo::URI::SRVProtocol do
     end
 
     describe '#servers' do
-      let(:string) { "#{scheme}#{servers}" }
+      let(:string) { "#{scheme}#{servers}#{options}" }
+      let(:servers) { 'test1.test.build.10gen.cc' }
+      let(:options) { '' }
 
       context 'single server' do
         let(:servers) { 'test5.test.build.10gen.cc' }
-
         it 'returns an array with the parsed server' do
           expect(uri.servers).to eq(['localhost.test.build.10gen.cc:27017'])
+        end
+
+        include_examples "roundtrips string"
+      end
+
+      context 'multiple servers' do
+        let(:hosts) { ['localhost.test.build.10gen.cc:27017', 'localhost.test.build.10gen.cc:27018'] }
+
+        context 'without srvMaxHosts' do
+          it 'returns an array with the parsed servers' do
+            expect(uri.servers.length).to eq 2
+            uri.servers.should =~ hosts
+          end
+
+          include_examples "roundtrips string"
+        end
+
+        context 'with srvMaxHosts' do
+          let(:options) { '/?srvMaxHosts=1' }
+          it 'returns an array with only one of the parsed servers' do
+            expect(uri.servers.length).to eq 1
+            expect(hosts.include?(uri.servers.first)).to be true
+          end
+
+          include_examples "roundtrips string"
+        end
+
+        context 'with srvMaxHosts > total hosts' do
+          let(:options) { '/?srvMaxHosts=3' }
+          it 'returns an array with only one of the parsed servers' do
+            expect(uri.servers.length).to eq 2
+            uri.servers.should =~ hosts
+          end
+
+          include_examples "roundtrips string"
+        end
+
+        context 'with srvMaxHosts == total hosts' do
+          let(:options) { '/?srvMaxHosts=2' }
+          it 'returns an array with only one of the parsed servers' do
+            expect(uri.servers.length).to eq 2
+            uri.servers.should =~ hosts
+          end
+
+          include_examples "roundtrips string"
+        end
+
+        context 'with srvMaxHosts=0' do
+          let(:options) { '/?srvMaxHosts=0' }
+          it 'returns an array with only one of the parsed servers' do
+            expect(uri.servers.length).to eq 2
+            uri.servers.should =~ hosts
+          end
+
+          include_examples "roundtrips string"
+        end
+
+        context 'when setting the srvServiceName' do
+          let(:servers) { 'test22.test.build.10gen.cc' }
+          let(:options) { '/?srvServiceName=customname' }
+
+          it 'returns an array with the parsed server' do
+            uri.servers.should =~ hosts
+          end
+
+          include_examples "roundtrips string"
         end
       end
     end
@@ -302,6 +376,8 @@ describe Mongo::URI::SRVProtocol do
       it 'sets ssl to true' do
         expect(options[:ssl]).to eq(true)
       end
+
+      include_examples "roundtrips string"
     end
 
     describe '#credentials' do
@@ -314,6 +390,10 @@ describe Mongo::URI::SRVProtocol do
 
         it 'returns the username' do
           expect(uri.credentials[:user]).to eq(user)
+        end
+
+        it "drops the colon in to_s" do
+          expect(uri.to_s).to eq("mongodb+srv://tyler@test5.test.build.10gen.cc")
         end
       end
 
@@ -328,6 +408,8 @@ describe Mongo::URI::SRVProtocol do
         it 'returns the password' do
           expect(uri.credentials[:password]).to eq(password)
         end
+
+        include_examples "roundtrips string"
       end
     end
 
@@ -340,6 +422,8 @@ describe Mongo::URI::SRVProtocol do
         it 'returns the database name' do
           expect(uri.database).to eq(db)
         end
+
+        include_examples "roundtrips string"
       end
     end
 
@@ -353,6 +437,8 @@ describe Mongo::URI::SRVProtocol do
         it 'returns an empty hash' do
           expect(uri.uri_options).to be_empty
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'write concern options provided' do
@@ -368,6 +454,8 @@ describe Mongo::URI::SRVProtocol do
           it 'sets the options on a client created with the uri' do
             expect(client.options[:write_concern]).to eq(concern)
           end
+
+          include_examples "roundtrips string"
         end
 
         context 'w=majority' do
@@ -381,6 +469,8 @@ describe Mongo::URI::SRVProtocol do
           it 'sets the options on a client created with the uri' do
             expect(client.options[:write_concern]).to eq(concern)
           end
+
+          include_examples "roundtrips string"
         end
 
         context 'journal' do
@@ -394,6 +484,8 @@ describe Mongo::URI::SRVProtocol do
           it 'sets the options on a client created with the uri' do
             expect(client.options[:write_concern]).to eq(concern)
           end
+
+          include_examples "roundtrips string"
         end
 
         context 'fsync' do
@@ -407,6 +499,8 @@ describe Mongo::URI::SRVProtocol do
           it 'sets the options on a client created with the uri' do
             expect(client.options[:write_concern]).to eq(concern)
           end
+
+          include_examples "roundtrips string"
         end
 
         context 'wtimeoutMS' do
@@ -420,6 +514,10 @@ describe Mongo::URI::SRVProtocol do
 
           it 'sets the options on a client created with the uri' do
             expect(client.options[:write_concern]).to eq(concern)
+          end
+
+          it "roundtrips the string with camelCase" do
+            expect(uri.to_s).to eq("mongodb+srv://test5.test.build.10gen.cc/?w=2&wTimeoutMS=1234")
           end
         end
       end
@@ -438,6 +536,8 @@ describe Mongo::URI::SRVProtocol do
           it 'sets the options on a client created with the uri' do
             expect(client.options[:read]).to eq(read)
           end
+
+          include_examples "roundtrips string"
         end
 
         context 'primaryPreferred' do
@@ -451,6 +551,8 @@ describe Mongo::URI::SRVProtocol do
           it 'sets the options on a client created with the uri' do
             expect(client.options[:read]).to eq(read)
           end
+
+          include_examples "roundtrips string"
         end
 
         context 'secondary' do
@@ -464,6 +566,8 @@ describe Mongo::URI::SRVProtocol do
           it 'sets the options on a client created with the uri' do
             expect(client.options[:read]).to eq(read)
           end
+
+          include_examples "roundtrips string"
         end
 
         context 'secondaryPreferred' do
@@ -477,6 +581,8 @@ describe Mongo::URI::SRVProtocol do
           it 'sets the options on a client created with the uri' do
             expect(client.options[:read]).to eq(read)
           end
+
+          include_examples "roundtrips string"
         end
 
         context 'nearest' do
@@ -490,6 +596,8 @@ describe Mongo::URI::SRVProtocol do
           it 'sets the options on a client created with the uri' do
             expect(client.options[:read]).to eq(read)
           end
+
+          include_examples "roundtrips string"
         end
       end
 
@@ -511,6 +619,8 @@ describe Mongo::URI::SRVProtocol do
           it 'sets the options on a client created with the uri' do
             expect(client.options[:read]).to eq(read)
           end
+
+          include_examples "roundtrips string"
         end
 
         context 'multiple read preference tag sets' do
@@ -529,6 +639,8 @@ describe Mongo::URI::SRVProtocol do
           it 'sets the options on a client created with the uri' do
             expect(client.options[:read]).to eq(read)
           end
+
+          include_examples "roundtrips string"
         end
       end
 
@@ -548,6 +660,10 @@ describe Mongo::URI::SRVProtocol do
 
         it 'sets the options on a client created with the uri' do
           expect(client.options[:read]).to eq(read)
+        end
+
+        it "rountrips the string with lowercase values" do
+          expect(uri.to_s).to eq("mongodb+srv://test5.test.build.10gen.cc/?readPreference=secondary&maxStalenessSeconds=120")
         end
 
         context 'when the read preference and max staleness combination is invalid' do
@@ -574,6 +690,10 @@ describe Mongo::URI::SRVProtocol do
             it 'does not raise an exception and is omitted' do
               expect(client.read_preference).to eq(BSON::Document.new(mode: :secondary))
             end
+
+            it "drops maxStalenessSeconds in to_s" do
+              expect(uri.to_s).to eq("mongodb+srv://test5.test.build.10gen.cc/?readPreference=secondary")
+            end
           end
         end
       end
@@ -589,6 +709,8 @@ describe Mongo::URI::SRVProtocol do
         it 'sets the options on a client created with the uri' do
           expect(client.options[:replica_set]).to eq(rs_name)
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'auth mechanism provided' do
@@ -614,6 +736,8 @@ describe Mongo::URI::SRVProtocol do
             client = new_local_client_nmio(string.downcase)
             expect(client.options[:auth_mech]).to eq(expected)
           end
+
+          include_examples "roundtrips string"
         end
 
         context 'mongodb-cr' do
@@ -632,6 +756,8 @@ describe Mongo::URI::SRVProtocol do
             client = new_local_client_nmio(string.downcase)
             expect(client.options[:auth_mech]).to eq(expected)
           end
+
+          include_examples "roundtrips string"
         end
 
         context 'gssapi' do
@@ -653,6 +779,10 @@ describe Mongo::URI::SRVProtocol do
             client = new_local_client_nmio(string.downcase)
             expect(client.options[:auth_mech]).to eq(expected)
           end
+
+          it "roundtrips the string" do
+            expect(uri.to_s).to eq("mongodb+srv://tyler:s3kr4t@test5.test.build.10gen.cc/?authSource=$external&authMechanism=GSSAPI")
+          end
         end
 
         context 'scram-sha-1' do
@@ -671,6 +801,8 @@ describe Mongo::URI::SRVProtocol do
             client = new_local_client_nmio(string.downcase)
             expect(client.options[:auth_mech]).to eq(expected)
           end
+
+          include_examples "roundtrips string"
         end
 
         context 'mongodb-x509' do
@@ -692,12 +824,20 @@ describe Mongo::URI::SRVProtocol do
             expect(client.options[:auth_mech]).to eq(expected)
           end
 
+          it "roundtrips the string" do
+            expect(uri.to_s).to eq("mongodb+srv://tyler@test5.test.build.10gen.cc/?authSource=$external&authMechanism=MONGODB-X509")
+          end
+
           context 'when a username is not provided' do
             let(:string) { "#{scheme}#{servers}/?#{options}" }
             it 'recognizes the mechanism with no username' do
               client = new_local_client_nmio(string.downcase)
               expect(client.options[:auth_mech]).to eq(expected)
               expect(client.options[:user]).to be_nil
+            end
+
+            it "roundtrips the string" do
+              expect(uri.to_s).to eq("mongodb+srv://test5.test.build.10gen.cc/?authSource=$external&authMechanism=MONGODB-X509")
             end
           end
         end
@@ -716,6 +856,8 @@ describe Mongo::URI::SRVProtocol do
           it 'sets the options on a client created with the uri' do
             expect(client.options[:auth_source]).to eq(source)
           end
+
+          include_examples "roundtrips string"
         end
       end
 
@@ -753,6 +895,7 @@ describe Mongo::URI::SRVProtocol do
           end
 
           include_examples 'sets options in the expected manner'
+          include_examples "roundtrips string"
         end
 
         context 'canonicalize_host_name' do
@@ -775,6 +918,7 @@ describe Mongo::URI::SRVProtocol do
           end
 
           include_examples 'sets options in the expected manner'
+          include_examples "roundtrips string"
         end
 
         context 'service_realm' do
@@ -797,6 +941,7 @@ describe Mongo::URI::SRVProtocol do
           end
 
           include_examples 'sets options in the expected manner'
+          include_examples "roundtrips string"
         end
 
         context 'multiple properties' do
@@ -827,6 +972,7 @@ describe Mongo::URI::SRVProtocol do
           end
 
           include_examples 'sets options in the expected manner'
+          include_examples "roundtrips string"
         end
       end
 
@@ -836,6 +982,8 @@ describe Mongo::URI::SRVProtocol do
         it 'sets the the connect timeout' do
           expect(uri.uri_options[:connect_timeout]).to eq(4.567)
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'socketTimeoutMS' do
@@ -844,6 +992,8 @@ describe Mongo::URI::SRVProtocol do
         it 'sets the socket timeout' do
           expect(uri.uri_options[:socket_timeout]).to eq(8.910)
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'when providing serverSelectionTimeoutMS' do
@@ -853,6 +1003,8 @@ describe Mongo::URI::SRVProtocol do
         it 'sets the the connect timeout' do
           expect(uri.uri_options[:server_selection_timeout]).to eq(3.561)
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'when providing localThresholdMS' do
@@ -862,6 +1014,20 @@ describe Mongo::URI::SRVProtocol do
         it 'sets the the connect timeout' do
           expect(uri.uri_options[:local_threshold]).to eq(3.561)
         end
+
+        include_examples "roundtrips string"
+      end
+
+      context 'when providing maxConnecting' do
+
+        let(:max_connecting) { 10 }
+        let(:options) { "maxConnecting=#{max_connecting}" }
+
+        it 'sets the max connecting option' do
+          expect(uri.uri_options[:max_connecting]).to eq(max_connecting)
+        end
+
+        include_examples "roundtrips string"
       end
 
       context 'when providing maxPoolSize' do
@@ -872,6 +1038,8 @@ describe Mongo::URI::SRVProtocol do
         it 'sets the max pool size option' do
           expect(uri.uri_options[:max_pool_size]).to eq(max_pool_size)
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'when providing minPoolSize' do
@@ -882,6 +1050,8 @@ describe Mongo::URI::SRVProtocol do
         it 'sets the min pool size option' do
           expect(uri.uri_options[:min_pool_size]).to eq(min_pool_size)
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'when providing waitQueueTimeoutMS' do
@@ -892,6 +1062,67 @@ describe Mongo::URI::SRVProtocol do
         it 'sets the wait queue timeout option' do
           expect(uri.uri_options[:wait_queue_timeout]).to eq(0.5)
         end
+
+        include_examples "roundtrips string"
+      end
+
+      context 'when providing srvMaxHosts' do
+        let(:srv_max_hosts) { 1 }
+        let(:options) { "srvMaxHosts=#{srv_max_hosts}" }
+
+        it 'sets the srv max hosts option' do
+          expect(uri.uri_options[:srv_max_hosts]).to eq(srv_max_hosts)
+        end
+
+        include_examples "roundtrips string"
+      end
+
+      context 'when providing srvMaxHosts as 0' do
+        let(:srv_max_hosts) { 0 }
+        let(:options) { "srvMaxHosts=#{srv_max_hosts}" }
+
+        it 'doesn\'t set the srv max hosts option' do
+          expect(uri.uri_options[:srv_max_hosts]).to eq(srv_max_hosts)
+        end
+
+        include_examples "roundtrips string"
+      end
+
+      context 'when providing invalid integer to srvMaxHosts' do
+        let(:srv_max_hosts) { -1 }
+        let(:options) { "srvMaxHosts=#{srv_max_hosts}" }
+
+        it 'does not set the srv max hosts option' do
+          expect(uri.uri_options).to_not have_key(:srv_max_hosts)
+        end
+
+        it "drops srvMaxHosts in to_s" do
+          expect(uri.to_s).to eq("mongodb+srv://test5.test.build.10gen.cc")
+        end
+      end
+
+      context 'when providing invalid type to srvMaxHosts' do
+        let(:srv_max_hosts) { "foo" }
+        let(:options) { "srvMaxHosts=#{srv_max_hosts}" }
+
+        it 'does not set the srv max hosts option' do
+          expect(uri.uri_options).to_not have_key(:srv_max_hosts)
+        end
+
+        it "drops srvMaxHosts in to_s" do
+          expect(uri.to_s).to eq("mongodb+srv://test5.test.build.10gen.cc")
+        end
+      end
+
+      context 'when providing srvServiceName' do
+        let(:srv_service_name) { "mongodb" }
+        let(:options) { "srvServiceName=#{srv_service_name}" }
+
+        it 'sets the srv service name option' do
+          expect(uri.uri_options[:srv_service_name]).to eq(srv_service_name)
+        end
+
+        include_examples "roundtrips string"
       end
 
       context 'ssl' do
@@ -903,6 +1134,10 @@ describe Mongo::URI::SRVProtocol do
           it 'sets the ssl option to true' do
             expect(uri.uri_options[:ssl]).to be true
           end
+
+          it "uses tls in to_s" do
+            expect(uri.to_s).to eq("mongodb+srv://test5.test.build.10gen.cc/?tls=true")
+          end
         end
 
         context 'false' do
@@ -910,6 +1145,10 @@ describe Mongo::URI::SRVProtocol do
 
           it 'sets the ssl option to false' do
             expect(uri.uri_options[:ssl]).to be false
+          end
+
+          it "uses tls in to_s" do
+            expect(uri.to_s).to eq("mongodb+srv://test5.test.build.10gen.cc/?tls=false")
           end
         end
       end
@@ -919,6 +1158,10 @@ describe Mongo::URI::SRVProtocol do
 
         it 'do not overshadow top level options' do
           expect(uri.uri_options).not_to be_empty
+        end
+
+        it "uses tls in to_s" do
+          expect(uri.to_s).to eq("mongodb+srv://test5.test.build.10gen.cc/?w=1&tls=true")
         end
       end
 
@@ -934,6 +1177,10 @@ describe Mongo::URI::SRVProtocol do
           expect(uri_options).to be_empty
         end
 
+        it "drops the invalid option in to_s" do
+          expect(uri.to_s).to eq("mongodb+srv://test5.test.build.10gen.cc")
+        end
+
         context 'when an invalid option is combined with valid options' do
 
           let(:options) { 'invalidOption=10&waitQueueTimeoutMS=500&ssl=true' }
@@ -946,15 +1193,21 @@ describe Mongo::URI::SRVProtocol do
             expect(uri_options[:wait_queue_timeout]).to eq(0.5)
             expect(uri_options[:ssl]).to be true
           end
+
+          it "drops the invalid option in to_s" do
+            expect(uri.to_s).to eq("mongodb+srv://test5.test.build.10gen.cc/?waitQueueTimeoutMS=500&tls=true")
+          end
         end
       end
 
       context 'when an app name option is provided' do
-        let(:options) { "appname=srv_test" }
+        let(:options) { "appName=srv_test" }
 
         it 'sets the app name on the client' do
           expect(client.options[:app_name]).to eq('srv_test')
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'when a supported compressors option is provided' do
@@ -963,6 +1216,8 @@ describe Mongo::URI::SRVProtocol do
         it 'sets the compressors as an array on the client' do
           expect(client.options[:compressors]).to eq(['zlib'])
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'when a non-supported compressors option is provided' do
@@ -972,6 +1227,8 @@ describe Mongo::URI::SRVProtocol do
           expect(Mongo::Logger.logger).to receive(:warn)
           expect(client.options[:compressors]).to be_nil
         end
+
+        include_examples "roundtrips string"
       end
 
       context 'when a zlibCompressionLevel option is provided' do
@@ -980,6 +1237,8 @@ describe Mongo::URI::SRVProtocol do
         it 'sets the zlib compression level on the client' do
           expect(client.options[:zlib_compression_level]).to eq(6)
         end
+
+        include_examples "roundtrips string"
       end
     end
   end

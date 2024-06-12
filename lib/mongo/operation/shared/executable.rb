@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2015-2020 MongoDB Inc.
 #
@@ -15,6 +15,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+require 'mongo/error'
+
 module Mongo
   module Operation
 
@@ -27,24 +29,45 @@ module Mongo
       include ResponseHandling
 
       def do_execute(connection, context, options = {})
-        unpin_maybe(session) do
+        session&.materialize_if_needed
+        unpin_maybe(session, connection) do
           add_error_labels(connection, context) do
-            add_server_diagnostics(connection) do
-              get_result(connection, context, options).tap do |result|
-                if session
-                  if session.in_transaction? &&
-                    connection.description.load_balancer?
-                  then
-                    if session.pinned_service_id
-                      unless session.pinned_service_id == connection.service_id
-                        raise Error::InternalDriverError, "Expected operation to use service #{session.pinned_session_id} but it used #{connection.service_id}"
+            check_for_network_error do
+              add_server_diagnostics(connection) do
+                get_result(connection, context, options).tap do |result|
+                  if session
+                    if session.in_transaction? &&
+                      connection.description.load_balancer?
+                    then
+                      if session.pinned_connection_global_id
+                        unless session.pinned_connection_global_id == connection.global_id
+                          raise(
+                            Error::InternalDriverError,
+                            "Expected operation to use connection #{session.pinned_connection_global_id} but it used #{connection.global_id}"
+                          )
+                        end
+                      else
+                        session.pin_to_connection(connection.global_id)
+                        connection.pin
                       end
-                    else
-                      session.pin_to_service(connection.service_id)
+                    end
+
+                    if session.snapshot? && !session.snapshot_timestamp
+                      session.snapshot_timestamp = result.snapshot_timestamp
                     end
                   end
+
+                  if result.has_cursor_id? &&
+                    connection.description.load_balancer?
+                  then
+                    if result.cursor_id == 0
+                      connection.unpin
+                    else
+                      connection.pin
+                    end
+                  end
+                  process_result(result, connection)
                 end
-                process_result(result, connection)
               end
             end
           end
@@ -78,7 +101,7 @@ module Mongo
         message = build_message(connection, context)
         message = message.maybe_encrypt(connection, context)
         reply = connection.dispatch([ message ], context, options)
-        [reply, connection.description]
+        [reply, connection.description, connection.global_id]
       end
 
       # @param [ Mongo::Server::Connection ] connection The connection on which
@@ -124,6 +147,18 @@ module Mongo
 
           connection.server.scan_semaphore.signal
         end
+      end
+
+      NETWORK_ERRORS = [
+        Error::SocketError,
+        Error::SocketTimeoutError
+      ].freeze
+
+      def check_for_network_error
+        yield
+      rescue *NETWORK_ERRORS
+        session&.dirty!
+        raise
       end
     end
   end

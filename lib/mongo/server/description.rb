@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -234,8 +234,7 @@ module Mongo
           # to work if the server it communicates with does not set serviceId
           # in ismaster/hello response.
           #
-          # In practice, there are currently no server version that actually
-          # sets this field.
+          # At the moment we cannot run a proper load balancer setup on evergreen
           #
           # Therefore, when connect=:load_balanced Ruby option is used instead
           # of the loadBalanced=true URI option, if serviceId is not set in
@@ -255,6 +254,8 @@ module Mongo
           # service ids are strings, to distinguish them from the real ones.
           # In particular processId is also a BSON::ObjectId, but will be
           # mapped to a string for clarity that this is a fake service id.
+          #
+          # TODO: Remove this when https://jira.mongodb.org/browse/RUBY-2881 is done.
           if ok? && !service_id
             unless force_load_balancer
               raise Error::MissingServiceId, "The server at #{address.seed} did not provide a service id in handshake response"
@@ -296,11 +297,6 @@ module Mongo
       # @return [ Features ] features The features for the server.
       def features
         @features
-      end
-
-      # @return [ nil | Object ] The service id, if any.
-      def service_id
-        config['serviceId']
       end
 
       # @return [ Float ] The moving average time the hello call took to complete.
@@ -843,6 +839,8 @@ module Mongo
         config['connectionId']
       end
 
+      # @return [ nil | Object ] The service id, if any.
+      #
       # @api experimental
       def service_id
         config['serviceId']
@@ -871,6 +869,14 @@ module Mongo
       # @api private
       def server_version_gte?(version)
         required_wv = case version
+          when '7.0'
+            21
+          when '6.0'
+            17
+          when '5.2'
+            15
+          when '5.1'
+            14
           when '5.0'
             12
           when '4.4'

@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2021 MongoDB Inc.
 #
@@ -35,7 +35,7 @@ module Mongo
     #
     # @api private
     class Context
-      def initialize(client: nil, session: nil, service_id: nil, options: nil)
+      def initialize(client: nil, session: nil, connection_global_id: nil, options: nil)
         if options
           if client
             raise ArgumentError, 'Client and options cannot both be specified'
@@ -46,13 +46,13 @@ module Mongo
           end
         end
 
-        if service_id && session&.pinned_service_id
-          raise ArgumentError, 'Trying to pin context to a service when the session is already pinned to a service'
+        if connection_global_id && session&.pinned_connection_global_id
+          raise ArgumentError, 'Trying to pin context to a connection when the session is already pinned to a connection.'
         end
 
         @client = client
         @session = session
-        @service_id = service_id
+        @connection_global_id = connection_global_id
         @options = options
       end
 
@@ -60,8 +60,8 @@ module Mongo
       attr_reader :session
       attr_reader :options
 
-      def service_id
-        @service_id || session&.pinned_service_id
+      def connection_global_id
+        @connection_global_id || session&.pinned_connection_global_id
       end
 
       def in_transaction?
@@ -97,6 +97,24 @@ module Mongo
           client.options[:server_api]
         elsif options
           options[:server_api]
+        end
+      end
+
+      # Whether the operation is a retry (true) or an initial attempt (false).
+      def retry?
+        !!@is_retry
+      end
+
+      # Returns a new context with the parameters changed as per the
+      # provided arguments.
+      #
+      # @option opts [ true|false ] :is_retry Whether the operation is a retry
+      #   or a first attempt.
+      def with(**opts)
+        dup.tap do |copy|
+          opts.each do |k, v|
+            copy.instance_variable_set("@#{k}", v)
+          end
         end
       end
 

@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -12,6 +12,7 @@ describe 'Explicit Encryption' do
   let(:client_encryption_opts) do
     {
       kms_providers: kms_providers,
+      kms_tls_options: kms_tls_options,
       key_vault_namespace: key_vault_namespace
     }
   end
@@ -72,6 +73,28 @@ describe 'Explicit Encryption' do
 
     context 'with AWS KMS provider' do
       include_context 'with AWS kms_providers'
+      retry_test
+
+      it_behaves_like 'an explicit encrypter'
+    end
+
+    context 'with Azure KMS provider' do
+      include_context 'with Azure kms_providers'
+      retry_test
+
+      it_behaves_like 'an explicit encrypter'
+    end
+
+    context 'with GCP KMS provider' do
+      include_context 'with GCP kms_providers'
+      retry_test
+
+      it_behaves_like 'an explicit encrypter'
+    end
+
+    context 'with KMIP KMS provider' do
+      include_context 'with KMIP kms_providers'
+      retry_test
 
       it_behaves_like 'an explicit encrypter'
     end
@@ -92,6 +115,24 @@ describe 'Explicit Encryption' do
       it_behaves_like 'an explicit encrypter'
     end
 
+    context 'with Azure KMS provider' do
+      include_context 'with Azure kms_providers'
+
+      it_behaves_like 'an explicit encrypter'
+    end
+
+    context 'with GCP KMS provider' do
+      include_context 'with GCP kms_providers'
+
+      it_behaves_like 'an explicit encrypter'
+    end
+
+    context 'with KMIP KMS provider' do
+      include_context 'with KMIP kms_providers'
+
+      it_behaves_like 'an explicit encrypter'
+    end
+
     context 'with local KMS provider' do
       include_context 'with local kms_providers'
 
@@ -104,6 +145,24 @@ describe 'Explicit Encryption' do
 
     context 'with AWS KMS provider' do
       include_context 'with AWS kms_providers'
+
+      it_behaves_like 'an explicit encrypter'
+    end
+
+    context 'with Azure KMS provider' do
+      include_context 'with Azure kms_providers'
+
+      it_behaves_like 'an explicit encrypter'
+    end
+
+    context 'with GCP KMS provider' do
+      include_context 'with GCP kms_providers'
+
+      it_behaves_like 'an explicit encrypter'
+    end
+
+    context 'with KMIP KMS provider' do
+      include_context 'with KMIP kms_providers'
 
       it_behaves_like 'an explicit encrypter'
     end

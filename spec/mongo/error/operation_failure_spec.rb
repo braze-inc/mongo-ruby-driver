@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'lite_spec_helper'
 
@@ -31,8 +31,9 @@ describe Mongo::Error::OperationFailure do
     context 'when there is a read retryable message' do
       let(:error) { Mongo::Error::OperationFailure.new('problem: socket exception', nil) }
 
-      it 'returns false' do
-        expect(error.write_retryable?).to eql(false)
+      it 'returns true (braze fork)' do
+        # braze fork accounts for socket exception and returns true
+        expect(error.write_retryable?).to eql(true)
       end
     end
 

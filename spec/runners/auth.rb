@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -48,7 +48,7 @@ module Mongo
       attr_reader :tests
 
       def initialize(test_path)
-        @spec = YAML.load(File.read(test_path))
+        @spec = ::Utils.load_spec_yaml_file(test_path)
         @description = File.basename(test_path)
       end
 

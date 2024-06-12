@@ -1,11 +1,14 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
 require 'runners/crud'
 
-describe 'Retryable reads spec tests' do
+base = "#{CURRENT_PATH}/spec_tests/data/retryable_reads"
+RETRYABLE_READS_TESTS = Dir.glob("#{base}/legacy/**/*.yml").sort
+
+describe 'Retryable reads legacy spec tests' do
   require_wired_tiger
   require_no_multi_mongos
 
@@ -22,6 +25,8 @@ describe 'Retryable reads spec tests - legacy' do
   require_no_multi_mongos
 
   define_crud_spec_tests(RETRYABLE_READS_TESTS) do |spec, req, test|
+    retry_test
+
     let(:client_options) do
       {
         max_read_retries: 1,

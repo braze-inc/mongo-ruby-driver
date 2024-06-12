@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -85,6 +85,26 @@ describe Mongo::Operation::Result do
 
       it 'returns zero' do
         expect(result.cursor_id).to eq(0)
+      end
+    end
+  end
+
+  describe '#has_cursor_id?' do
+    context 'when the reply exists' do
+
+      let(:cursor_id) { 5 }
+
+      it 'returns true' do
+        expect(result).to have_cursor_id
+      end
+    end
+
+    context 'when the reply does not exist' do
+
+      let(:reply) { nil }
+
+      it 'returns false' do
+        expect(result).not_to have_cursor_id
       end
     end
   end

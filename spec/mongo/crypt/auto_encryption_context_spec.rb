@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'mongo'
 require 'lite_spec_helper'
@@ -8,7 +8,8 @@ describe Mongo::Crypt::AutoEncryptionContext do
   require_libmongocrypt
   include_context 'define shared FLE helpers'
 
-  let(:mongocrypt) { Mongo::Crypt::Handle.new(kms_providers, logger: logger) }
+  let(:credentials) { Mongo::Crypt::KMS::Credentials.new(kms_providers) }
+  let(:mongocrypt) { Mongo::Crypt::Handle.new(credentials, logger: logger) }
   let(:context) { described_class.new(mongocrypt, io, db_name, command) }
 
   let(:logger) { nil }
@@ -76,6 +77,21 @@ describe Mongo::Crypt::AutoEncryptionContext do
 
     context 'with AWS KMS providers' do
       include_context 'with AWS kms_providers'
+      it_behaves_like 'a functioning AutoEncryptionContext'
+    end
+
+    context 'with Azure KMS providers' do
+      include_context 'with Azure kms_providers'
+      it_behaves_like 'a functioning AutoEncryptionContext'
+    end
+
+    context 'with GCP KMS providers' do
+      include_context 'with GCP kms_providers'
+      it_behaves_like 'a functioning AutoEncryptionContext'
+    end
+
+    context 'with KMIP KMS providers' do
+      include_context 'with KMIP kms_providers'
       it_behaves_like 'a functioning AutoEncryptionContext'
     end
 

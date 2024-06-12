@@ -1,7 +1,7 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
-require 'lite_spec_helper'
+require 'spec_helper'
 require 'support/shared/protocol'
 
 describe Mongo::Protocol::Msg do
@@ -237,44 +237,6 @@ describe Mongo::Protocol::Msg do
         end
       end
 
-=begin no longer supported
-      context 'when a 0 payload type is specified' do
-
-        let(:section) do
-          { type: 0, payload: { ismaster: 1 } }
-        end
-
-        let(:section_payload_type) { bytes.to_s[36] }
-        let(:section_bytes) { bytes.to_s[37..-1] }
-
-        it 'sets the payload type' do
-          expect(section_payload_type).to eq(0.chr)
-        end
-
-        it 'serializes the section' do
-          expect(section_bytes).to be_bson(section[:payload])
-        end
-      end
-
-      context 'when a no payload type is specified' do
-
-        let(:section) do
-          { payload: { ismaster: 1 } }
-        end
-
-        let(:section_payload_type) { bytes.to_s[36] }
-        let(:section_bytes) { bytes.to_s[37..-1] }
-
-        it 'sets the payload type as 0' do
-          expect(section_payload_type).to eq(0.chr)
-        end
-
-        it 'serializes the section' do
-          expect(section_bytes).to be_bson(section[:payload])
-        end
-      end
-=end
-
       context 'when a payload of type 1 is specified' do
 
         let(:section) do
@@ -366,31 +328,9 @@ describe Mongo::Protocol::Msg do
           end
         end
       end
-
-=begin no longer supported
-      context 'when the sections are mixed types and payload type 1 comes before type 0' do
-
-        let(:section1) do
-          Mongo::Protocol::Msg::Section1.new('documents', [ { a: 1 } ])
-        end
-
-        let(:section2) do
-          { type: 0, payload: { 'b' => 2 } }
-        end
-
-        let(:sections) do
-          [ section1, section2 ]
-        end
-
-        it 'serializes all sections' do
-          expect(deserialized.documents).to eq([ BSON::Document.new(main_document), { 'a' => 1 }, { 'b' => 2 }])
-        end
-      end
-=end
     end
 
     context 'when the validating_keys option is true with payload 1' do
-
       let(:sequences) do
         [ section ]
       end
@@ -403,10 +343,8 @@ describe Mongo::Protocol::Msg do
         { validating_keys: true }
       end
 
-      it 'checks the sequence document keys' do
-        expect {
-          message.serialize
-        }.to raise_exception(BSON::String::IllegalKey)
+      it 'does not check the sequence document keys' do
+        expect(message.serialize).to be_a(BSON::ByteBuffer)
       end
     end
 
@@ -522,6 +460,47 @@ describe Mongo::Protocol::Msg do
 
       it 'creates an #op_code instance method' do
         expect(message.op_code).to eq(described_class::OP_CODE)
+      end
+    end
+  end
+
+  describe '#number_returned' do
+
+    let(:batch) do
+      (1..2).map{ |i| { field: "test#{i}" }}
+    end
+
+    context 'when the msg contains a find document' do
+
+      let(:find_document) { { "cursor" => { "firstBatch" => batch } } }
+
+      let(:find_message) do
+        described_class.new(flags, options, find_document, *sequences)
+      end
+
+      it 'returns the correct number_returned' do
+        expect(find_message.number_returned).to eq(2)
+      end
+    end
+
+    context 'when the msg contains a getmore document' do
+      let(:next_document) { { "cursor" => { "nextBatch" => batch } } }
+
+      let(:next_message) do
+        described_class.new(flags, options, next_document, *sequences)
+      end
+
+      it 'returns the correct number_returned' do
+        expect(next_message.number_returned).to eq(2)
+      end
+    end
+
+    context 'when the msg contains a document without first/nextBatch' do
+
+      it 'raises NotImplementedError' do
+        lambda do
+          message.number_returned
+        end.should raise_error(NotImplementedError, /number_returned is only defined for cursor replies/)
       end
     end
   end

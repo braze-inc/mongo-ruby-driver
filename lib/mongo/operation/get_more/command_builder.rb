@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2021 MongoDB Inc.
 #
@@ -30,7 +30,11 @@ module Mongo
             collection: spec.fetch(:coll_name),
             batchSize: spec[:batch_size],
             maxTimeMS: spec[:max_time_ms],
-          }.compact
+          }.compact.tap do |sel|
+            if spec[:comment] && connection.features.get_more_comment_enabled?
+              sel[:comment] = spec[:comment]
+            end
+          end
         end
       end
     end

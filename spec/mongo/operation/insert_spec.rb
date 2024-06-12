@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 require 'spec_helper'
 
@@ -177,7 +177,7 @@ describe Mongo::Operation::Insert do
         end
 
         it 'inserts the documents into the collection' do
-          expect(authorized_collection.find.to_a). to eq(documents)
+          expect(authorized_collection.find.sort(_id: 1).to_a). to eq(documents)
         end
       end
 
@@ -252,38 +252,6 @@ describe Mongo::Operation::Insert do
           }.to raise_error(Mongo::Error::MaxBSONSize)
           expect(authorized_collection.find.count).to eq(0)
         end
-      end
-    end
-
-    context 'when write concern { w: 0 } is used' do
-      max_server_version '3.4'
-
-      let(:spec) do
-        { :documents     => documents,
-          :db_name       => SpecConfig.instance.test_db,
-          :coll_name     => TEST_COLL,
-          :write_concern => Mongo::WriteConcern.get(:w => 0)
-        }
-      end
-
-      let(:documents) do
-        [{ '_id' => 1 }]
-      end
-
-      let(:op) do
-        described_class.new(spec)
-      end
-
-      before do
-        expect(Mongo::Operation::Insert::Legacy).to receive(:new).and_call_original
-      end
-
-      let(:response) do
-        op.execute(authorized_primary, context: context)
-      end
-
-      it 'uses op codes instead of write commands' do
-        expect(response.written_count).to eq(0)
       end
     end
   end

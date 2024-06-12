@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-# encoding: utf-8
+# rubocop:todo all
 
 # Copyright (C) 2014-2020 MongoDB Inc.
 #
@@ -59,37 +59,34 @@ module Mongo
       operation_id = Monitoring.next_operation_id
       result_combiner = ResultCombiner.new
       operations = op_combiner.combine
+      validate_requests!
 
       client.send(:with_session, @options) do |session|
         context = Operation::Context.new(client: client, session: session)
         operations.each do |operation|
           if single_statement?(operation)
             write_concern = write_concern(session)
-            write_with_retry(session, write_concern) do |server, txn_num|
-              server.with_connection(service_id: context.service_id) do |connection|
-                execute_operation(
-                  operation.keys.first,
-                  operation.values.flatten,
-                  connection,
-                  context,
-                  operation_id,
-                  result_combiner,
-                  session,
-                  txn_num)
-              end
+            write_with_retry(write_concern, context: context) do |connection, txn_num, context|
+              execute_operation(
+                operation.keys.first,
+                operation.values.flatten,
+                connection,
+                context,
+                operation_id,
+                result_combiner,
+                session,
+                txn_num)
             end
           else
-            nro_write_with_retry(session, write_concern) do |server|
-              server.with_connection(service_id: context.service_id) do |connection|
-                execute_operation(
-                  operation.keys.first,
-                  operation.values.flatten,
-                  connection,
-                  context,
-                  operation_id,
-                  result_combiner,
-                  session)
-              end
+            nro_write_with_retry(write_concern, context: context) do |connection, txn_num, context|
+              execute_operation(
+                operation.keys.first,
+                operation.values.flatten,
+                connection,
+                context,
+                operation_id,
+                result_combiner,
+                session)
             end
           end
         end
@@ -118,7 +115,8 @@ module Mongo
     #   )
     #
     # @param [ Mongo::Collection ] collection The collection.
-    # @param [ Array<Hash, BSON::Document> ] requests The requests.
+    # @param [ Enumerable<Hash, BSON::Document> ] requests The requests,
+    #   cannot be empty.
     # @param [ Hash, BSON::Document ] options The options.
     #
     # @since 2.1.0
@@ -179,7 +177,9 @@ module Mongo
         :max_time_ms => options[:max_time_ms],
         :options => options,
         :id_generator => client.options[:id_generator],
-        :session => session
+        :session => session,
+        :comment => options[:comment],
+        :let => options[:let],
       }
     end
 
@@ -188,7 +188,7 @@ module Mongo
       validate_array_filters!(connection)
       validate_hint!(connection)
 
-      unpin_maybe(session) do
+      unpin_maybe(session, connection) do
         if values.size > connection.description.max_write_batch_size
           split_execute(name, values, connection, context, operation_id, result_combiner, session, txn_num)
         else
@@ -210,7 +210,7 @@ module Mongo
     # 3.6+ servers being able to split less.
     rescue Error::MaxBSONSize, Error::MaxMessageSize => e
       raise e if values.size <= 1
-      unpin_maybe(session) do
+      unpin_maybe(session, connection) do
         split_execute(name, values, connection, context, operation_id, result_combiner, session, txn_num)
       end
     end
@@ -222,7 +222,7 @@ module Mongo
     def split_execute(name, values, connection, context, operation_id, result_combiner, session, txn_num)
       execute_operation(name, values.shift(values.size / 2), connection, context, operation_id, result_combiner, session, txn_num)
 
-      txn_num = session.next_txn_num if txn_num
+      txn_num = session.next_txn_num if txn_num && !session.in_transaction?
       execute_operation(name, values, connection, context, operation_id, result_combiner, session, txn_num)
     end
 
@@ -278,12 +278,98 @@ module Mongo
 
     def validate_hint!(connection)
       if op_combiner.has_hint?
-        if write_concern && !write_concern.acknowledged?
+        if !can_hint?(connection) && write_concern && !write_concern.acknowledged?
           raise Error::UnsupportedOption.hint_error(unacknowledged_write: true)
         elsif !connection.features.update_delete_option_validation_enabled?
           raise Error::UnsupportedOption.hint_error
         end
       end
+    end
+
+    # Loop through the requests and check if each operation is allowed to send
+    # a hint for each operation on the given server version.
+    #
+    # For the following operations, the client can send a hint for servers >= 4.2
+    # and for the rest, the client can only send it for 4.4+:
+    #   - updateOne
+    #   - updateMany
+    #   - replaceOne
+    #
+    # @param [ Connection ] connection The connection object.
+    #
+    # @return [ true | false ] Whether the request is able to send hints for
+    #   the current server version.
+    def can_hint?(connection)
+      gte_4_2 = connection.server.description.server_version_gte?('4.2')
+      gte_4_4 = connection.server.description.server_version_gte?('4.4')
+      op_combiner.requests.all? do |req|
+        op = req.keys.first
+        if req[op].keys.include?(:hint)
+          if [:update_one, :update_many, :replace_one].include?(op)
+            gte_4_2
+          else
+            gte_4_4
+          end
+        else
+          true
+        end
+      end
+    end
+
+    # Perform the request document validation required by driver specifications.
+    # This method validates the first key of each update request document to be
+    # an operator (i.e. start with $) and the first key of each replacement
+    # document to not be an operator (i.e. not start with $). The request document
+    # may be invalid without this method flagging it as such (for example an
+    # update or replacement document containing some keys which are operators
+    # and some which are not), in which case the driver expects the server to
+    # fail the operation with an error.
+    #
+    # @raise [ Error::InvalidUpdateDocument, Error::InvalidReplacementDocument ]
+    #   if the document is invalid.
+    def validate_requests!
+      # requests_empty = true
+      @requests.each do |req|
+        # requests_empty = false
+        if op = req.keys.first
+          if [:update_one, :update_many].include?(op)
+            if doc = maybe_first(req.dig(op, :update))
+              if key = doc.keys&.first
+                unless key.to_s.start_with?("$")
+                  if Mongo.validate_update_replace
+                    raise Error::InvalidUpdateDocument.new(key: key)
+                  else
+                    Error::InvalidUpdateDocument.warn(Logger.logger, key)
+                  end
+                end
+              end
+            end
+          elsif op == :replace_one
+            if key = req.dig(op, :replacement)&.keys&.first
+              if key.to_s.start_with?("$")
+                if Mongo.validate_update_replace
+                  raise Error::InvalidReplacementDocument.new(key: key)
+                else
+                  Error::InvalidReplacementDocument.warn(Logger.logger, key)
+                end
+              end
+            end
+          end
+        end
+      # Sometimes we send empty requests so don't raise an error here until we fix that
+      # end.tap do
+        # raise ArgumentError, "Bulk write requests cannot be empty" if requests_empty
+      end
+    end
+
+    # If the given object is an array return the first element, otherwise
+    # return the given object.
+    #
+    # @param [ Object ] obj The given object.
+    #
+    # @return [ Object ] The first element of the array or the given object.
+    def maybe_first(obj)
+      obj.is_a?(Array) ? obj.first : obj
     end
   end
 end
