@@ -58,7 +58,8 @@ module Mongo
           Error::ConnectionPerished,
           Error::ServerNotUsable,
           Error::SocketError,
-          Error::SocketTimeoutError
+          Error::SocketTimeoutError,
+          Error::PoolClearedError,
         ].freeze
       end
 
