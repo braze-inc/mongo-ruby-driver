@@ -218,7 +218,7 @@ module Mongo
         
         if is_retryable_exception?(e)
           raise e if attempt > client.max_read_retries || session&.in_transaction?
-        elsif e.retryable? && !session&.in_transaction?
+        elsif e.respond_to?(:retryable?) && e.retryable? && !session&.in_transaction?
           raise e if attempt > client.max_read_retries
         else
           raise e
