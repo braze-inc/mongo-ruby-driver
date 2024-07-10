@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative '../suite'
-
 task driver_bench: %i[ driver_bench:data driver_bench:run ]
 
 SPECS_REPO_URI = 'git@github.com:mongodb/specifications.git'
@@ -33,6 +31,8 @@ namespace :driver_bench do
 
   desc 'Runs the DriverBench benchmark suite'
   task :run do
+    require_relative '../suite'
+
     Mongo::DriverBench::Suite.run!
   end
 end
