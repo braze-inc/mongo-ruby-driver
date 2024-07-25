@@ -53,7 +53,8 @@ module Mongo
       rescue ::Mongo::Error::NoServerAvailable => e
         if !retried_server_selector
           retried_server_selector = true
-          log_retry(e, message: "Select server #{cluster.servers.inspect}: #{e.inspect}")
+          message = "Select server #{cluster.servers.inspect}: #{e.inspect}"
+          Logger.logger.warn("[jontest] #{message} due to: #{e.class.name}: #{e.message}")
           # Force a synchronous scan to ensure that monitors are online
           cluster.scan!(true)
           failed_server = nil
