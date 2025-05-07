@@ -46,10 +46,16 @@ module Mongo
     # @api private
     #
     # @return [ Mongo::Server ] A server matching the server preference.
-    def select_server(cluster, server_selector, session, failed_server = nil)
+    def select_server(cluster, server_selector, session, failed_server = nil, timeout: nil)
       retried_server_selector = false
       begin
-        server_selector.select_server(cluster, nil, session, deprioritized: [failed_server].compact)
+        server_selector.select_server(
+          cluster,
+          nil,
+          session,
+          deprioritized: [failed_server].compact,
+          timeout: timeout
+        )
       rescue ::Mongo::Error::NoServerAvailable => e
         if !retried_server_selector
           retried_server_selector = true

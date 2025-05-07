@@ -53,6 +53,9 @@ API documentation for the most recent release can be found
 To build API documentation for the master branch, check out the
 repository locally and run `rake docs`.
 
+High-level driver documentation including tutorials and the reference that were in the docs folder can now be found
+at the docs-ruby repository, [here](https://github.com/mongodb/docs-ruby)
+
 ## Support
 
 Commercial support for the driver is available through the
@@ -115,7 +118,7 @@ their applications.
 
 ## Running Tests
 
-Please refer to [spec/README.md](spec/README.md) for instructions on how
+Please refer to [spec/README.md](https://github.com/mongodb/mongo-ruby-driver/blob/master/spec/README.md) for instructions on how
 to run the driver's test suite.
 
 ## Release History
