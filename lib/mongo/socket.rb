@@ -271,7 +271,7 @@ module Mongo
         return ''.force_encoding('BINARY')
       end
 
-      _timeout = timeout || self.timeout
+      _timeout = (timeout || Thread.current.thread_variable_get(:mongo_query_read_timeout) || self.timeout || MAX_QUERY_READ_TIMEOUT).to_f()
       if _timeout
         if _timeout > 0
           deadline = Utils.monotonic_time + _timeout
@@ -325,24 +325,33 @@ module Mongo
           data[retrieved, chunk.length] = chunk
           retrieved += chunk.length
         end
-      # As explained in https://ruby-doc.com/core-trunk/IO.html#method-c-select,
-      # reading from a TLS socket may require writing which may raise WaitWritable
+        # As explained in https://ruby-doc.com/core-trunk/IO.html#method-c-select,
+        # reading from a TLS socket may require writing which may raise WaitWritable
       rescue IO::WaitReadable, IO::WaitWritable => exc
         if deadline
           select_timeout = deadline - Utils.monotonic_time
-          if select_timeout <= 0
-            raise Errno::ETIMEDOUT, "Took more than #{_timeout} seconds to receive data"
-          end
         end
+
+        should_error_out = select_timeout && select_timeout <= 0
+
+        # If we have a timeout, only use a 5 second Kernel.select timeout so we can record logs if
+        # the query is taking a long time to respond
+        modified_select_timeout = if !should_error_out
+          # wait on the socket for at most 5 seconds
+          [5, select_timeout].min()
+        else
+          select_timeout
+        end
+
         pipe = options[:pipe]
         if exc.is_a?(IO::WaitReadable)
           if pipe
-            select_args = [[@socket, pipe], nil, [@socket, pipe], select_timeout]
+            select_args = [[@socket, pipe], nil, [@socket, pipe], modified_select_timeout]
           else
-            select_args = [[@socket], nil, [@socket], select_timeout]
+            select_args = [[@socket], nil, [@socket], modified_select_timeout]
           end
         else
-          select_args = [nil, [@socket], [@socket], select_timeout]
+          select_args = [nil, [@socket], [@socket], modified_select_timeout]
         end
 
         rv = Kernel.select(*select_args)
@@ -364,21 +373,44 @@ module Mongo
           end
         end
 
-        if BSON::Environment.jruby?
-          # Ignore the return value of Kernel.select.
-          # On JRuby, select appears to return nil prior to timeout expiration
-          # (apparently due to a EAGAIN) which then causes us to fail the read
-          # even though we could have retried it.
-          # Check the deadline ourselves.
-          if deadline
-            select_timeout = deadline - Utils.monotonic_time
-            if select_timeout <= 0
-              raise Errno::ETIMEDOUT, "Took more than #{_timeout} seconds to receive data"
-            end
-          end
-        elsif rv.nil?
-          raise Errno::ETIMEDOUT, "Took more than #{_timeout} seconds to receive data (select call timed out)"
+        # if BSON::Environment.jruby?
+        #   # Ignore the return value of Kernel.select.
+        #   # On JRuby, select appears to return nil prior to timeout expiration
+        #   # (apparently due to a EAGAIN) which then causes us to fail the read
+        #   # even though we could have retried it.
+        #   # Check the deadline ourselves.
+        #   if deadline
+        #     select_timeout = deadline - Utils.monotonic_time
+        #     if select_timeout <= 0
+        #       raise Errno::ETIMEDOUT, "Took more than #{_timeout} seconds to receive data"
+        #     end
+        #   end
+        # elsif rv.nil?
+        #   raise Errno::ETIMEDOUT, "Took more than #{_timeout} seconds to receive data (select call timed out)"
+        # end
+
+        if !should_error_out
+          should_error_out = !rv
         end
+
+        if should_error_out
+          exception_class = Thread.current.thread_variable_get(:mongo_query_read_timeout_exception) || Mongo::Socket::ReadMaxTimeoutError
+          msg = "Took more than #{_timeout} seconds to receive data."
+          increment_read_failures()
+          if exception_class == Mongo::Error::OperationFailure
+            # Only retry reads that are for short timeouts or for data processing; the default timeout in
+            # MongoQueryHangPreventionMiddleware is quite long and if we're hitting it often, then we want the job
+            # to fail and not have the driver retry to avoid flooding the database.
+            if retry_read? && _timeout <= Appboy::SidekiqMiddleware::MongoQueryHangPreventionMiddleware::DATA_PROCESSOR_TIMEOUT
+              # "socket exception" required for the OperationFailure error to be considered "retryable?"
+              # by the Mongo driver.
+              msg += " socket exception."
+            end
+            Mongo::Logger.logger.info(msg)
+          end
+          raise exception_class.new(msg)
+        end
+
         retry
       end
 
