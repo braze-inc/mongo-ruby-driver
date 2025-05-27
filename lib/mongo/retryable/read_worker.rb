@@ -225,7 +225,7 @@ module Mongo
           raise e
         end
 
-        log_retry(e, message: "Legacy read retry for read on #{cluster.servers.inspect}: #{e.inspect}, attempt #{attempt}, max retries is #{client.max_read_retries}")
+        log_retry(e, message: 'Legacy read retry')
         sleep(client.read_retry_interval) unless is_retryable_exception?(e)
         retry
       end
