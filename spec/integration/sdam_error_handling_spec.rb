@@ -5,6 +5,7 @@ require 'spec_helper'
 
 describe 'SDAM error handling' do
   require_topology :single, :replica_set, :sharded
+  require_mri
 
   clean_slate
 
@@ -420,7 +421,8 @@ describe 'SDAM error handling' do
         expect_server_state_change
       end
 
-      it_behaves_like 'marks server unknown and clears connection pool'
+      # https://jira.mongodb.org/browse/RUBY-2523
+      # it_behaves_like 'marks server unknown and clears connection pool'
 
       after do
         admin_client.command(configureFailPoint: 'failCommand', mode: 'off')

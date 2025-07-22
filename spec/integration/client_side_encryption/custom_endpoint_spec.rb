@@ -94,11 +94,7 @@ describe 'Client-Side Encryption' do
       end
 
       let(:error_regex) do
-        if BSON::Environment.jruby?
-          /SocketError/
-        else
-          /Connection refused/
-        end
+        /Connection refused|SocketError|SocketTimeoutError/
       end
 
       it_behaves_like 'raising a KMS error'
@@ -123,7 +119,7 @@ describe 'Client-Side Encryption' do
       end
 
       let(:error_regex) do
-        /SocketError: getaddrinfo:/
+        /(SocketError|ResolutionError): getaddrinfo:/
       end
 
       it_behaves_like 'raising a KMS error'

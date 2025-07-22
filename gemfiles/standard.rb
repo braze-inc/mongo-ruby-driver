@@ -28,14 +28,10 @@ def standard_dependencies
     gem 'yajl-ruby', platforms: :mri, require: false
     gem 'celluloid', platforms: :mri, require: false
 
-    # for static analysis -- ignore ruby < 2.6 because of rubocop
-    # version incompatibilities
-    if RUBY_VERSION > '2.5.99'
-      gem 'rubocop', '~> 1.45.1'
-      gem 'rubocop-performance', '~> 1.16.0'
-      gem 'rubocop-rake', '~> 0.6.0'
-      gem 'rubocop-rspec', '~> 2.18.1'
-    end
+    gem 'rubocop', '~> 1.45.1'
+    gem 'rubocop-performance', '~> 1.16.0'
+    gem 'rubocop-rake', '~> 0.6.0'
+    gem 'rubocop-rspec', '~> 2.18.1'
 
     platform :mri do
       # Debugger for VSCode.
@@ -49,6 +45,7 @@ def standard_dependencies
   group :testing do
     gem 'timecop'
     gem 'ice_nine'
+    gem 'async', '2.23.1', platforms: :mri if RUBY_VERSION.match?(/^3\.1/)
     gem 'rubydns', platforms: :mri
     gem 'rspec-retry'
     gem 'rfc', '~> 0.2.0'
@@ -65,8 +62,9 @@ def standard_dependencies
     gem 'tilt'
     # solargraph depends on rbs, which won't build on jruby for some reason
     gem 'solargraph', platforms: :mri
+    gem 'ruby-lsp', platforms: :mri
   end
 
-  gem 'libmongocrypt-helper', '~> 1.8.0' if ENV['FLE'] == 'helper'
+  gem 'libmongocrypt-helper', '~> 1.14.0' if ENV['FLE'] == 'helper'
 end
 # rubocop:enable Metrics/AbcSize, Metrics/MethodLength, Metrics/BlockLength
